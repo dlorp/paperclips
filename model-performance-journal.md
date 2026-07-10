@@ -23,3 +23,27 @@ Outcome and verification: outstanding — 1 blocker + 12 majors + 1 minor, and t
 Performance observations: ~12 min wall at xhigh. Findings precise, each with concrete failure scenario + 1-2 line fix; report format followed exactly. Zero fabrication; zero scope creep.
 
 Routing assessment: Sol xhigh is a frontier-grade design reviewer — for contract-dense specs it outperformed the same doc's first-round review on depth (different axis: precision holes vs design contradictions; the two rounds were complementary, validating the two-family sequence). Use Sol xhigh for judgment-dense spec gates; keep Cursor for artifact-probing reviews. Confidence: high.
+
+## 2026-07-09 - gpt-5.6 codex (sol, high) via codex - wave 1: full CLI implementation
+
+Command and run: `delegate --group papercuts-wave1 codex work --model sol --reasoning-effort high --prompt-file _scratch/implement-wave1-prompt.md`; alias `codex-4`; mode work, in-place tree.
+
+Task and expectation: author the entire v0.1 CLI (~2,400 lines incl. tests) from the r3 design doc in one clustered lane.
+
+Outcome and verification: exceptional fidelity. Coordinator re-ran the full gate independently (build/clippy/fmt + 5x sweep) — green, 22 tests. Coordinator riskiest-file read (store.rs, add.rs, resolve.rs, doctor spot-checks) found zero defects: critical sections correct, length-prefixed hash byte-exact to spec, tear-heal + rollback present, fold matrix genuinely adversarial. Cross-family review (cursor-2) found 1 real blocker (pre-lock exists() TOCTOU + NotFound→74) and 4 majors — author-blindness held true at the contract margins, not the core.
+
+Performance observations: ~19 min wall for a whole product. Zero scope creep, zero deviations, honest report.
+
+Routing assessment: Sol high remains the fleet author. The review lane still earns its keep — never skip it. Confidence: high.
+
+## 2026-07-09 - grok-4.5-fast-xhigh via cursor - wave-1 adversarial code review
+
+Command and run: `delegate --group papercuts-wave1-review cursor safe --prompt-file _scratch/review-wave1-prompt.md`; alias `cursor-2`; safe/isolated.
+
+Task and expectation: attack the uncommitted wave-1 diff against the r3 contract, 7 named hunt areas.
+
+Outcome and verification: 1 blocker + 4 majors + 3 minors, all verified real by coordinator read; zero false positives. The blocker (TOCTOU exists()-then-open, NotFound mapped to the wrong exit) had survived BOTH the author's tests and the coordinator's manual trace of the same files — textbook decorrelation value. Also produced a non-findings checklist confirming verified-OK areas, which cut triage time.
+
+Performance observations: ~11 min. Findings came with file:line, concrete scenarios, and a hunt-checklist table. Static-only (no test execution) — noted honestly.
+
+Routing assessment: Cursor/Grok-4.5 confirmed as the fleet ATTACKER on code as well as designs. Confidence: high.
