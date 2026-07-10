@@ -47,3 +47,19 @@ Outcome and verification: 1 blocker + 4 majors + 3 minors, all verified real by 
 Performance observations: ~11 min. Findings came with file:line, concrete scenarios, and a hunt-checklist table. Static-only (no test execution) — noted honestly.
 
 Routing assessment: Cursor/Grok-4.5 confirmed as the fleet ATTACKER on code as well as designs. Confidence: high.
+
+## 2026-07-09 - swe-1.7 via devin - wave-1 fix rounds 1+2
+
+Command and run: `delegate --group papercuts-wave1-fix devin work --prompt-file _scratch/fix-wave1-prompt.md` (devin-1) and `..._scratch/fix2-wave1-prompt.md` (devin-2); work mode, in-place.
+
+Task and expectation: execute findings-shaped fix lists (7 findings round 1, 4 round 2), each with required pinning tests, no scope creep.
+
+Outcome and verification: flawless both rounds. Every fix verified on disk by coordinator grep/read; coordinator gate green 5x after each. Round 1 included one deviation (ambiguous_id exit 2→65) that was argued correctly and honestly flagged. Round 2 exceeded spec in the right way: made error.rs a const contract table and derived the schema command's dictionaries from it, structurally killing the drift class rather than patching the instance — then manually verified the nested-git test-fragility fix by running the suite with TMPDIR inside a fresh git repo, unprompted thoroughness.
+
+Performance observations: ~9 and ~7 min. Zero unrequested edits; reports exactly in the requested format.
+
+Routing assessment: Devin remains the SURGEON — findings-shaped fix work routes here by default. Confidence: high.
+
+## 2026-07-09 - live acceptance (coordinator-driven)
+
+Release binary driven through the full agent lifecycle in a fresh playground repo: schema self-orientation, harness detection, stdin add, fixed-clock duplicate handling, 12-way concurrent adds (15/15 clean lines), md digest with strikethrough, resolve by prefix + idempotent re-resolve, torn-line self-heal, doctor exit dictionary, explicit-missing=66 vs virtual-empty, home fallback, byte-identical determinism. Zero unexplained failures; the only anomalies were the coordinator's own jq paths against the flattened ListItem shape.
