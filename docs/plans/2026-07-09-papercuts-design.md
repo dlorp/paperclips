@@ -1,6 +1,6 @@
 # papercuts — design doc
 
-2026-07-09. Coordinator-authored. Status: r2 — amended after adversarial review (see Amendments).
+2026-07-09. Coordinator-authored. Status: r3 — twice-amended after two decorrelated adversarial reviews (Grok 4.5, GPT-5.6 Sol xhigh); implementation-ready. See both Amendments sections for full triage provenance.
 
 ## Thesis and provenance
 
@@ -18,19 +18,22 @@ Binary and crate: `papercuts` (crates.io name verified free 2026-07-09; bare `pa
 
 ```text
 papercuts add <TEXT | ->        # file a papercut ('-' reads text from stdin)
-papercuts list                  # read papercuts (default: open only, newest first)
+papercuts list                  # read papercuts (default: open only, severity-first then newest)
 papercuts resolve <ID>          # mark a papercut resolved (append-only event)
 papercuts schema [all|record|error|exit-codes]   # machine contract, self-orientation
-papercuts doctor [--fix]        # validate the log file, quarantine malformed lines
+papercuts doctor                # validate the log file (diagnose-only)
 ```
 
 `log` is an alias of `add` (the verb people will guess from Steve's post); `add` is canonical.
 
-Global flags: `--file <PATH>` (explicit log file, overrides discovery), `--pretty`, `--quiet`. No color anywhere, ever (agent-only tool; there is nothing to colorize — output is JSON).
+Global flags: `--file <PATH>` (explicit log file, overrides discovery; relative paths resolve against cwd) and `--pretty` (pretty-print JSON output; no-op for `--format md`). No `--quiet` in v1 (cut — its interaction with data output was underspecified; warnings ride in `meta`, which is already machine-skippable). No color anywhere, ever (agent-only tool; there is nothing to colorize — output is JSON).
 
 ### `add`
 
-- **Idempotent**: if the computed ID already exists in the log, nothing is appended; the existing record is returned with `data.changed: false` and `meta.warnings: ["duplicate of existing cut; nothing appended"]`. A fresh append returns `data.changed: true`. This makes agent retries safe and makes post-merge duplicate lines self-healing (first-wins fold).
+- **Duplicate-safe, not retry-idempotent** (r3 correction): the content-addressed ID exists for determinism and merge self-healing, NOT as an exactly-once mechanism — a retry at a later wall-clock second produces a new ts, hence a new ID and a second cut, and that is accepted v1 behavior. If the computed ID already exists in the log (fixed-clock tests, post-merge duplicate lines, byte-identical racing adds), nothing is appended and the existing record is returned with `data.changed: false` plus a warning. A caller-supplied idempotency key is an explicit non-goal for v1.
+- The ID check and the append happen inside one exclusive-lock critical section (lock → read+fold → decide → append) — two racing identical adds cannot both append.
+- `--dry-run`: full discovery, agent resolution, validation, and record construction; reports the would-be record with `data.changed: false`; creates no file and no directory.
+- Text is bounded: max 10,000 bytes after trailing-newline strip; larger is `invalid_input` (exit 65).
 - Positional `TEXT` (or `-` for stdin; stdin also used when text is omitted and stdin is non-TTY).
 - `--agent <NAME>`: reporter identity. Resolution order: flag → `PAPERCUTS_AGENT` env → harness detection (`CLAUDECODE`→`claude-code`, `CODEX_*`→`codex`, `CURSOR_*`→`cursor`) → `"unknown"`. The resolved value AND its source (`flag|env|detected|default`) are echoed in output meta — no silent ambient inference.
 - `--tag <TAG>` (repeatable), `--severity minor|major|blocker` (default `minor`).
@@ -39,17 +42,18 @@ Global flags: `--file <PATH>` (explicit log file, overrides discovery), `--prett
 
 ### `list`
 
-- Filters: `--status open|resolved|all` (default `open`), `--agent`, `--tag`, `--severity`, `--since <RFC3339 | Nd | Nh>`.
-- `--limit N` (default 50) — bounded output by default; envelope carries `count`, `total`, `truncated`.
-- `--format json|jsonl|md` (default `json`). `md` is the one human-facing surface: a compact review digest grouped by severity.
-- Empty result is exit 0 with an empty array and a hint in `meta.warnings` — never exit 1.
+- Filters: `--status open|resolved|all` (default `open`), `--agent`, `--tag`, `--severity`, `--since <RFC3339 | Nd | Nh>`. All filters inspect **cut** fields (`--since` compares the cut's `ts`, never the resolve's).
+- `--limit N` (default 50) — bounded output by default; envelope carries `count` (items returned), `total` (matches before limit), `truncated` (`total > count`). The limit slices AFTER the normative sort, so `--limit 1` returns the highest-severity-then-newest match.
+- `--format json|md` (default `json`; `jsonl` cut in r3 — one envelope is the contract). `md` is the **sole raw-output exception** in the tool: raw Markdown on stdout, no envelope, warnings as a trailing `> note:` blockquote.
+- Empty result is exit 0 with an empty array and a hint in `meta.warnings` — never exit 1. A **missing log file at a discovered default location** is virtual empty state (exit 0, warning `"no papercuts file yet; papercuts add creates it"`); a missing file at an **explicit** `--file`/`PAPERCUTS_FILE` path is exit 66.
 
 ### `resolve`
 
 - `papercuts resolve <ID> [--note <TEXT>] [--agent <NAME>] [--dry-run]`. Appends a `resolve` event; never rewrites history. `--dry-run` reports what would be appended without writing. Output includes `data.changed: bool`.
+- The existence/status check and the append run inside one exclusive-lock critical section — two racing resolves of the same cut yield one `changed:true` and one already-resolved.
 - Unknown ID → structured `not_found` error, exit 66, with a hint naming `papercuts list --status all`.
-- Already-resolved ID → **idempotent success** with `meta.warnings: ["already resolved"]` (agents retry; retries must be safe).
-- ID prefix matching: a unique prefix (≥4 chars) resolves; an ambiguous prefix errors listing the candidates (deterministic forgiveness — never guess between two).
+- Already-resolved ID → **idempotent success**, `data.changed: false`, `meta.warnings: ["already resolved"]`.
+- ID prefix matching (normative): candidates are the distinct folded cut IDs (first-wins, including resolved cuts; orphan resolves are never candidates). A prefix is `pc_` optional + ≥4 hex digits, matched case-insensitively. Unique → resolves; ambiguous → `ambiguous_id` error listing full candidate IDs sorted ascending; <4 hex digits → `invalid_argument`.
 
 ### `schema`
 
@@ -57,17 +61,20 @@ Prints the full machine contract as JSON: contract version, every command/flag, 
 
 ### `doctor` (v1: diagnose-only)
 
-- Validates the log file: every line parses as a known event, IDs well-formed; reports torn last line, git conflict markers (`<<<<<<<`), unknown kinds, orphan resolves, duplicate cut lines — each with line numbers.
-- Duplicate cut lines are a **warning, not an error** (expected after git concat-merges; `list` folds them first-wins).
+- Validates the log file: every line parses as a known event, IDs verified by **recomputation** (id must equal the hash of the record's fields); reports torn last line, git conflict-marker lines, unknown kinds, orphan resolves, duplicate cut lines — each as a structured finding `{line, kind, message}` with line numbers. A missing file at a discovered default is healthy-empty (exit 0 + note).
+- Conflict-marker detection matches only complete physical marker lines (`<<<<<<< `/`>>>>>>> ` prefixes) — a cut whose *text* mentions conflict markers parses as valid JSON and is never flagged.
+- Byte-identical duplicate cut lines are a **warning, not an error** (expected after git concat-merges; `list` folds them first-wins). Same-ID lines with **different payloads** (or an ID that fails recomputation) are an `id_conflict` finding — corruption, not a benign duplicate.
 - If the `git` binary is available and the log lives in a repo, warns when the log path is gitignored (the diff-visibility feature silently off).
 - **No `--fix` in v1** (review finding: an unguarded quarantine that eats a mis-judged line is worse than no fix; a safe fix path needs backup/undo/dry-run — v2). Exit dictionary: 0 healthy / 1 findings, published in `schema`.
 
 ### Envelope and exit codes
 
 Success: `{"ok":true,"data":{…},"meta":{…}}` on stdout, single line (or pretty with `--pretty`).
-Error: `{"ok":false,"error":{"code":"…","message":"…","details":{…},"retryable":bool,"suggested_fix":"paste-ready command"}}` on **stderr**.
+Error: `{"ok":false,"error":{"code":"…","message":"…","details":{…},"retryable":bool,"suggested_fix":"paste-ready command"},"meta":{"contract":1}}` on **stderr** — the `meta` block (with `contract`) rides on error envelopes too.
 
-Exit codes follow the rust-agent-cli skill dictionary: 0 success/empty, 2 usage, 65 bad input data, 66 missing file / not-found ID, 70 internal, 78 config — plus **74 (I/O error) as a documented extension** to the skill table (deliberate deviation, published in `schema`; implementer must not "fix" this back). No network, no auth → 75/77 unused. Doctor uses its own published dictionary.
+Clap integration: `try_parse`; parse failures are rewritten into the error envelope (code `invalid_argument`, exit 2, carrying clap's did-you-mean hint when present). The two documented plaintext exceptions: explicit `--help` and `--version` print clap's human text on stdout, exit 0.
+
+Exit codes follow the rust-agent-cli skill dictionary: 0 success/empty, 2 usage, 65 bad input data, 66 missing file / not-found ID, 70 internal, 75 lock timeout (`retryable:true`), 77 permission denied, 78 config — plus **74 (I/O error) as a documented extension** to the skill table (deliberate deviation, published in `schema`; implementer must not "fix" this back). `std::io::ErrorKind::PermissionDenied` maps to 77/`permission_denied`; other I/O failures to 74/`io_error`. Doctor uses its own published dictionary (0 healthy / 1 findings).
 
 Every envelope (success and error) carries `meta.contract: 1` so consumers can detect contract skew. `schema` output includes an env-var inventory (`PAPERCUTS_FILE`, `PAPERCUTS_AGENT`, `PAPERCUTS_NOW`) and per-command `read_only`/`appends`/`destructive` annotations.
 
@@ -85,13 +92,20 @@ Resolve event:
 {"kind":"resolve","id":"pc_a1b2c3d4e5f6","ts":"2026-07-10T09:00:00.000Z","agent":"trey","note":"added rg wrapper to CLAUDE.md"}
 ```
 
-- `id` = `pc_` + first 12 hex of SHA-256 over `ts|agent|text` — content-addressed, deterministic, collision-negligible at this scale.
+- `id` = `pc_` + first 12 lowercase hex of SHA-256 over the **length-prefixed** field sequence `len(ts) ts len(agent) agent len(text) text len(severity) severity len(tags.join(","))  tags.join(",")` (each len a u32-LE of the UTF-8 byte count; tags sorted) — content-addressed and unambiguous (no delimiter injection), covering every user-supplied field so two same-instant records differing only in severity/tags get distinct IDs.
+
+### Materialized output shapes (normative)
+
+`add`/`resolve` data: `{"changed":bool,"record":{cut fields}}` (`resolve` returns the cut plus its `resolution`).
+`list` data: `{"items":[ListItem…],"count":N,"total":M,"truncated":bool}` where `ListItem` = all cut fields + `"status":"open"|"resolved"` + `"resolution":{"ts","agent","note"}` (present only when resolved; `note` null when absent).
+`doctor` data: `{"healthy":bool,"findings":[{"line":N,"kind":"torn_line|malformed|unknown_kind|orphan_resolve|duplicate_cut|id_conflict|conflict_marker|gitignored","message":"…"}],"checked_lines":N}`.
+`schema` data: the contract object (version, commands with `read_only`/`appends`/`destructive` flags, env vars, error codes, exit codes, record + ListItem shapes). Representative instances of every shape are pinned by deserialization tests.
 - `ts` = UTC RFC3339 milliseconds. `PAPERCUTS_NOW` env (RFC3339) overrides the clock for reproducible tests — documented, not hidden.
 - Unknown `kind` values are skipped by `list` with a `meta.warnings` count (forward compatibility) but flagged by `doctor`.
 
 ## Storage
 
-**Append-only JSONL, event-sourced.** Per the state-and-persistence reference: append-only + no transactional check-then-act = JSONL, not SQLite. `resolve` is an appended event, not a mutation, so the file is never rewritten in normal operation (only `doctor --fix` rewrites, atomically). `list` folds cut+resolve events into current state at read time — trivial at the scale of a papercuts log (thousands of lines, single-digit ms).
+**Append-only JSONL, event-sourced.** Per the state-and-persistence reference: the check-then-act each mutation needs is serialized by the exclusive file lock (see Concurrency), so JSONL beats SQLite here. `resolve` is an appended event, not a rewrite; **nothing rewrites the file in v1** (the only in-place bytes ever added are appends, including the tear-healing `\n`). `list` folds cut+resolve events into current state at read time — trivial at the scale of a papercuts log (thousands of lines, single-digit ms).
 
 File discovery order:
 
@@ -104,7 +118,7 @@ The per-repo default is the point: the log travels with the repo, and every `add
 
 Repo-root detection treats `.git` as a root marker whether it is a **directory or a file** (worktrees and submodules use a `.git` file).
 
-Concurrency: writes open with `O_APPEND`, take an exclusive `std::fs::File::lock` (stabilized std — no locking dep), serialize the full line to one buffer, and land it with a **single `write` call**, flush, unlock. Reads take a shared lock. Multiple concurrent agents on one file are safe. Durability is best-effort (no fsync per append — documented; a papercut lost to a power cut is acceptable). Advisory locks are only claimed for **local filesystems**; network mounts (NFS/SMB) are documented as unsupported.
+Concurrency (r3-hardened): mutations open read+append, acquire an exclusive `std::fs::File` lock via **bounded `try_lock` retries** (50 × 100ms; exhaustion → `lock_timeout`, exit 75, `retryable:true`), and run the whole read → fold → decide → append sequence inside that one critical section. The append serializes the full line to one buffer and lands it with `write_all`; on a mid-write error the file is truncated back to its pre-append length (we hold the lock and captured the length). If the file is nonempty and its last byte is not `\n`, the writer first appends a lone `\n` — terminating a previously torn fragment so it becomes one skippable malformed line and the new record stays intact (self-healing, never wedged). Reads take a shared lock with the same bounded retries. Durability is best-effort (no fsync per append — documented; a papercut lost to a power cut is acceptable). Advisory locks are only claimed for **local filesystems**; network mounts (NFS/SMB) are documented as unsupported. First `add` creates the file (and `~/.papercuts/` when at the home fallback) race-safely via `create_dir_all` + open `create|read|append`. Empty `PAPERCUTS_FILE`/`PAPERCUTS_AGENT` env values are treated as unset; an unresolvable home directory is a config error (78).
 
 ### `list` fold algorithm (normative)
 
@@ -131,8 +145,11 @@ Nothing else. No tokio, no color crates, no config-file crate, no git library.
 
 - Parser unit tests via `Cli::try_parse_from` (conflicts, defaults, bad values).
 - Black-box CLI tests via `assert_cmd`: every command's success shape deserialized into its envelope struct; every error path asserts code + exit code + that the `suggested_fix` hint survives (pinned per the error-rewriting craft).
-- Concurrency test: N threads `add` simultaneously against one file; assert N valid lines, no interleaving/corruption.
-- Determinism test: two identical invocations with `PAPERCUTS_NOW` fixed produce byte-identical output.
+- **Table-driven fold matrix**: adversarial event orderings — resolve-before-cut, orphan resolve, duplicate cuts (identical and id-conflicting), duplicate resolves, torn tail, unknown kinds, interleavings of all of the above — each row asserting folded state + warning counts.
+- Concurrency tests: (a) N threads × M distinct `add`s against one file → exactly N×M valid lines; (b) racing **identical** adds → exactly one line, one `changed:true`; (c) racing resolves of one cut → one `changed:true`, one already-resolved.
+- Torn-tail self-heal test: truncated final line, then `add` → fragment terminated, new record intact, `list` shows it with one malformed-line warning.
+- Discovery precedence tests: `--file` beats env beats walk-up beats home; explicit-missing = 66 vs discovered-missing = virtual empty; `.git`-as-file root.
+- Determinism test: two identical invocations with `PAPERCUTS_NOW` fixed against **identical fresh state** produce byte-identical stdout; the fixed-clock retry case is asserted separately (`changed:true` then `changed:false`).
 - Quality gate: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`, `cargo build --release`. 5x test sweep before any commit.
 - Live acceptance (coordinator-driven): drive the real binary through the full agent lifecycle including empty states, malformed file, ambiguous prefixes, concurrent adds, stdin path.
 
@@ -161,6 +178,16 @@ Reviewers: Cursor (Grok 4.5) `safe`, delivered; Codex GPT-5.6 Sol xhigh attempte
 **Accepted-reduced:** NFS handling = documentation only, no runtime network-fs detection (unreliable heuristics); prefix-resolve stays ≥4 chars but all emitted examples use full IDs.
 
 **Rejected with reasons:** `--correlation-id` (see non-goals); `meta.ignored_by_git` on every `add`/`list` (spawning `git check-ignore` per invocation buys little — doctor covers it); runtime `tempfile` dep (moot — no rewrite path in v1); Windows lock-behavior work (stays a documented non-goal).
+
+## Amendments (r3, from Codex GPT-5.6 Sol xhigh review 2026-07-09)
+
+Second decorrelated review: 1 blocker, 12 major, 1 minor. Triage:
+
+**Accepted (folded in):** F2 mutations lock-then-fold-then-append in one critical section + race tests; F3 `write_all` + truncate-on-error + tear-healing `\n` + 10KB text bound; F4 bounded `try_lock` (50×100ms) → exit 75 retryable; F5 purged all `doctor --fix` ghosts; F6 `add --dry-run`; F7 cut `--format jsonl` and `--quiet`, md documented as sole raw-output exception; F8 normative materialized shapes (ListItem, doctor findings, mutation data) + filter/limit semantics; F9 `meta.contract` on error envelopes, clap `try_parse` rewriting + help/version exceptions, PermissionDenied → 77; F10 severity-first-then-newest is the one normative sort (synopsis fixed, limit-slice pinned); F11 normative prefix candidate set (folded distinct cuts, ≥4 hex after optional `pc_`, case-insensitive); F12 virtual-empty for discovered-missing vs 66 for explicit-missing, race-safe creation, env-empty=unset, no-home=78; F13 conflict markers as physical lines only, `id_conflict` for same-ID-different-payload, doctor recomputes IDs; F14 fold matrix + the concurrency/discovery/format test additions.
+
+**Accepted-reduced:** F1 (the blocker) — the retry-idempotence *claim* was wrong and is retracted; the fix is honest reframing (duplicate-safe content addressing for determinism + merge self-healing), a length-prefixed all-field hash (kills delimiter injection and the fixed-clock severity-collapse), and NOT a caller idempotency key (explicit v1 non-goal — complaint logging does not need exactly-once, and a key registry contradicts append-only simplicity). F3's "refuse appends on missing final newline" reduced to tear-healing (a wedged log with no rewrite path would be strictly worse).
+
+**Rejected:** none — every finding drew blood. Round 2 of plan review closes here (two decorrelated rounds, findings converged from design contradictions to contract precision; residual risk moves to the code-review wave).
 
 ## Wave plan
 
