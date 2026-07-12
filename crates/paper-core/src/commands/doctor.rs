@@ -23,7 +23,7 @@ pub struct Finding {
     pub message: String,
 }
 
-pub fn run(file: Option<PathBuf>, pretty: bool) -> AppResult<i32> {
+pub fn run(file: Option<PathBuf>, pretty: bool, scan: bool) -> AppResult<i32> {
     let resolved = store::discover(file)?;
     let mut warnings = Vec::new();
     let (mut data, file_existed) = match store::with_shared(&resolved.path, |log| {
@@ -70,6 +70,21 @@ pub fn run(file: Option<PathBuf>, pretty: bool) -> AppResult<i32> {
         });
         data.healthy = false;
     }
+    if scan && file_existed {
+        let scan_result = store::with_shared(&resolved.path, |log| {
+            let bytes = store::read_bytes(log, &resolved.path)?;
+            Ok(scan_for_secrets(&bytes))
+        });
+        match scan_result {
+            Ok(findings) => {
+                for finding in findings {
+                    data.findings.push(finding);
+                    data.healthy = false;
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
     let exit = i32::from(!data.healthy);
     let mut meta = Meta::new();
     meta.file = Some(resolved.path.to_string_lossy().into_owned());
@@ -77,6 +92,27 @@ pub fn run(file: Option<PathBuf>, pretty: bool) -> AppResult<i32> {
     output::write_success(data, pretty, meta)
         .map_err(|error| AppError::from_io(error, std::path::Path::new("stdout")))?;
     Ok(exit)
+}
+
+fn scan_for_secrets(bytes: &[u8]) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    let line_count = bytes.split(|byte| *byte == b'\n').count();
+    for (index, raw) in bytes.split(|byte| *byte == b'\n').enumerate() {
+        if raw.is_empty() && index + 1 == line_count {
+            continue;
+        }
+        let line = index + 1;
+        if let Ok(text) = std::str::from_utf8(raw) {
+            if let Some(pattern) = crate::secrets::scan(text) {
+                findings.push(Finding {
+                    line,
+                    kind: "secret_found".into(),
+                    message: format!("potential secret detected: {pattern}"),
+                });
+            }
+        }
+    }
+    findings
 }
 
 fn inspect(bytes: &[u8]) -> DoctorData {

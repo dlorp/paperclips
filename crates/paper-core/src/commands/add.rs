@@ -32,6 +32,11 @@ pub fn run(args: AddArgs, file: Option<PathBuf>, pretty: bool, now: Timestamp) -
             "Shorten the papercut text to at most 10000 UTF-8 bytes.",
         ));
     }
+    if !args.force {
+        if let Some(pattern) = crate::secrets::scan(&text) {
+            return Err(AppError::secret_detected(pattern));
+        }
+    }
     if args
         .agent
         .as_deref()
@@ -61,14 +66,12 @@ pub fn run(args: AddArgs, file: Option<PathBuf>, pretty: bool, now: Timestamp) -
         text,
         tags,
         severity: args.severity,
-        cwd: std::env::current_dir()
-            .map_err(|error| AppError::from_io(error, std::path::Path::new(".")))?
-            .to_string_lossy()
-            .into_owned(),
-        repo: resolved
-            .repo
-            .as_ref()
-            .map(|path| path.to_string_lossy().into_owned()),
+        cwd: store::repo_relative(
+            resolved.repo.as_deref(),
+            &std::env::current_dir()
+                .map_err(|error| AppError::from_io(error, std::path::Path::new(".")))?,
+        ),
+        repo: resolved.repo.as_ref().map(|_| ".".to_string()),
         where_loc,
     };
 

@@ -138,10 +138,43 @@ pub fn discover_clips(flag: Option<PathBuf>) -> AppResult<ResolvedFile> {
     })
 }
 
+/// Convert an absolute path to a repo-relative path.
+/// Returns "." when path equals the repo root. Falls back to absolute when
+/// no repo root is known or the path is outside the repo.
+pub fn repo_relative(repo: Option<&Path>, path: &Path) -> String {
+    match repo {
+        Some(root) => match path.strip_prefix(root) {
+            Ok(rel) => {
+                let s = rel.to_string_lossy();
+                if s.is_empty() {
+                    ".".to_string()
+                } else {
+                    s.into_owned()
+                }
+            }
+            Err(_) => path.to_string_lossy().into_owned(),
+        },
+        None => path.to_string_lossy().into_owned(),
+    }
+}
+
 pub fn find_repo_root(start: &Path) -> Option<PathBuf> {
     start
         .ancestors()
-        .find(|candidate| candidate.join(".git").exists())
+        .find(|candidate| {
+            let dot_git = candidate.join(".git");
+            if !dot_git.exists() {
+                return false;
+            }
+            if dot_git.is_dir() {
+                dot_git.join("HEAD").exists()
+            } else if dot_git.is_file() {
+                std::fs::read_to_string(&dot_git)
+                    .is_ok_and(|content| content.starts_with("gitdir:"))
+            } else {
+                false
+            }
+        })
         .map(Path::to_path_buf)
 }
 

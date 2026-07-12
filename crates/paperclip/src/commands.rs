@@ -21,6 +21,7 @@ pub fn add(
     tags: Vec<String>,
     impact: Impact,
     dry_run: bool,
+    force: bool,
     where_loc: Option<String>,
     file: Option<PathBuf>,
     pretty: bool,
@@ -46,6 +47,11 @@ pub fn add(
             "Pass non-empty TEXT.",
         ));
     }
+    if !force {
+        if let Some(pattern) = paper_core::secrets::scan(&text) {
+            return Err(AppError::secret_detected(pattern));
+        }
+    }
     let (agent, _source) = resolve_agent(agent);
     let mut tags = tags;
     tags.sort();
@@ -60,10 +66,12 @@ pub fn add(
         tags,
         impact,
         where_loc: where_normalized,
-        cwd: std::env::current_dir()
-            .map_err(|e| AppError::from_io(e, std::path::Path::new(".")))?
-            .to_string_lossy().into_owned(),
-        repo: resolved.repo.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        cwd: store::repo_relative(
+            resolved.repo.as_deref(),
+            &std::env::current_dir()
+                .map_err(|e| AppError::from_io(e, std::path::Path::new(".")))?,
+        ),
+        repo: resolved.repo.as_ref().map(|_| ".".to_string()),
 
     };
     let mut warnings = Vec::new();

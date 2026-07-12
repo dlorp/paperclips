@@ -34,7 +34,13 @@ pub enum Command {
         #[arg(value_enum, default_value_t = SchemaTarget::All)]
         target: SchemaTarget,
     },
-    Doctor,
+    Doctor(DoctorArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
+    #[arg(long)]
+    pub scan: bool,
 }
 
 #[derive(Debug, Args)]
@@ -49,6 +55,8 @@ pub struct AddArgs {
     pub severity: Severity,
     #[arg(long)]
     pub dry_run: bool,
+    #[arg(long)]
+    pub force: bool,
     #[arg(long = "where", value_name = "COMPONENT")]
     pub where_loc: Option<String>,
 }

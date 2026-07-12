@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT"
 description = "Log wins and clips — the positive side of the agent friction log."
 repository = "https://github.com/dlorp/paperclips"
+rust-version.workspace = true
 
 [dependencies]
 paper-core = { path = "../paper-core" }

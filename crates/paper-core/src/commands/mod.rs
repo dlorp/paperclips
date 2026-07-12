@@ -19,6 +19,6 @@ pub fn run(cli: Cli, now: Timestamp) -> AppResult<i32> {
                 .map_err(|error| AppError::from_io(error, std::path::Path::new("stdout")))?;
             Ok(0)
         }
-        Command::Doctor => doctor::run(cli.file, cli.pretty),
+        Command::Doctor(args) => doctor::run(cli.file, cli.pretty, args.scan),
     }
 }

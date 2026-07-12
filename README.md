@@ -30,6 +30,10 @@ When both logs share a `--where` on the same component, `paperclip review` surfa
 cargo install --git https://github.com/dlorp/paperclips --bins
 ```
 
+## Minimum Supported Rust Version
+
+**Rust 1.89** — enforced via `rust-version` in each crate's `Cargo.toml`.
+
 ## Quick start
 
 ```bash

@@ -69,6 +69,11 @@ pub const ERROR_CONTRACT: &[ErrorContract] = &[
         exit_code: 70,
         description: "internal error",
     },
+    ErrorContract {
+        code: "secret_detected",
+        exit_code: 69,
+        description: "potential secret detected in input; use --force to override",
+    },
 ];
 
 pub fn exit_code_for(code: &str) -> i32 {
@@ -138,6 +143,17 @@ impl AppError {
             message,
             false,
             "Run `papercuts doctor`; if the problem persists, report the command and papercuts version.",
+        )
+    }
+
+    pub fn secret_detected(pattern: &str) -> Self {
+        Self::new(
+            "secret_detected",
+            format!(
+                "potential secret detected in text: {pattern}. Use --force to append anyway."
+            ),
+            false,
+            "Remove the secret from the text, or pass --force to append anyway.",
         )
     }
 

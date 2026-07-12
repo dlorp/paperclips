@@ -54,6 +54,8 @@ pub struct AddArgs {
     pub impact: Impact,
     #[arg(long)]
     pub dry_run: bool,
+    #[arg(long)]
+    pub force: bool,
     #[arg(long = "where", value_name = "COMPONENT")]
     pub where_loc: Option<String>,
 }
@@ -137,7 +139,7 @@ fn main() {
             .unwrap_or_else(|error| paper_core::output::write_error(&error)),
         Command::Add(args) => commands::add(
             args.what, args.agent, args.tags, args.impact, args.dry_run,
-            args.where_loc, cli.file, cli.pretty,
+            args.force, args.where_loc, cli.file, cli.pretty,
             paper_core::effective_now().unwrap(),
         ).unwrap_or_else(|error| paper_core::output::write_error(&error)),
         Command::List(args) => commands::list(
