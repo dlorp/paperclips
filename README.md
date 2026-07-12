@@ -9,6 +9,19 @@ AI agents generate a lot of signal during work — dead-end tool calls, broken l
 - **papercuts** — log friction (what to fix) — `.papercuts.jsonl`
 - **paperclip** — log wins (what to keep) — `.paperclips.jsonl`
 
+## Lifecycle
+
+The lifecycle inverts, not just the sentiment.
+
+**Cuts** end in `resolve` — the problem is gone. Someone fixed the friction, and the record closes. The goal is elimination.
+
+**Clips** end in `promote` — the win gets written into CLAUDE.md, AGENTS.md, or a skill so future sessions inherit it. The goal is compounding. A clip that stays in the log is a single observation. A clip promoted to docs is a permanent capability upgrade.
+
+```
+Cuts:   add → [someone fixes it] → resolve    (friction eliminated)
+Clips:  add → [someone codifies it] → promote  (win inherited)
+```
+
 When both logs share a `--where` on the same component, `paperclip review` surfaces it as an **Overlap**: the highest-information record in the system.
 
 ## Install
@@ -57,7 +70,7 @@ Overlap shapes — read each pair and assign one:
 
 ## Dogfooding
 
-This repo includes `.paperclips.jsonl` with 3 entries (2 clips, 1 cut) demonstrating the format in production — including the canonical `bridge-trigger` Shape A overlap. Read it to see how the `note` field carries context that a single `what` line cannot capture.
+This repo eats its own cooking. `.paperclips.jsonl` and `.papercuts.jsonl` are committed with real entries — the overlap report in this README is a copy-paste from the repo's own log, not a hypothetical.
 
 ## Attribution
 
