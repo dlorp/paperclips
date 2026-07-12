@@ -1,0 +1,265 @@
+use paper_core::error::{AppError, AppResult};
+use paper_core::output::{self, Meta};
+use paper_core::store;
+use paper_core::{ClipRecord, ClipStatus, Impact, compute_clip_id, format_timestamp, normalize_where, resolve_agent};
+use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
+use std::io::{IsTerminal, Read};
+use std::path::PathBuf;
+
+use crate::{OutputFormat, StatusFilter};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ClipAddData {
+    pub changed: bool,
+    pub record: ClipRecord,
+}
+
+pub fn add(
+    text: Option<String>,
+    agent: Option<String>,
+    tags: Vec<String>,
+    impact: Impact,
+    dry_run: bool,
+    where_loc: Option<String>,
+    file: Option<PathBuf>,
+    pretty: bool,
+    now: Timestamp,
+) -> AppResult<i32> {
+    let resolved = store::discover_clips(file)?;
+    let text = if let Some(t) = text {
+        t
+    } else if std::io::stdin().is_terminal() {
+        return Err(AppError::invalid_argument(
+            "TEXT is required when stdin is not piped",
+            "Pass TEXT as a positional argument or pipe it on stdin.",
+        ));
+    } else {
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)
+            .map_err(|e| AppError::from_io(e, std::path::Path::new("stdin")))?;
+        buf
+    };
+    if text.trim().is_empty() {
+        return Err(AppError::invalid_input(
+            "clip text cannot be empty",
+            "Pass non-empty TEXT.",
+        ));
+    }
+    let (agent, _source) = resolve_agent(agent);
+    let mut tags = tags;
+    tags.sort();
+    let ts = format_timestamp(now);
+    let where_normalized = normalize_where(where_loc);
+    let record = ClipRecord {
+        kind: "clip".into(),
+        id: compute_clip_id(&ts, &agent, &text, impact, &tags),
+        ts,
+        agent,
+        text,
+        tags,
+        impact,
+        where_loc: where_normalized,
+        cwd: std::env::current_dir()
+            .map_err(|e| AppError::from_io(e, std::path::Path::new(".")))?
+            .to_string_lossy().into_owned(),
+        repo: resolved.repo.as_ref().map(|p| p.to_string_lossy().into_owned()),
+
+    };
+    let mut warnings = Vec::new();
+    let (changed, record) = if dry_run {
+        warnings.push("dry run; no record appended".into());
+        (false, record)
+    } else {
+        store::with_exclusive(&resolved.path, true, |log| {
+            let bytes = store::read_bytes(log, &resolved.path)?;
+            let folded = store::fold_clip_bytes(&bytes);
+            let duplicate = folded.items.iter().any(|item| item.clip.id == record.id);
+            if !duplicate {
+                store::append_json(log, &resolved.path, &bytes, &record)?;
+            }
+            Ok((!duplicate, record))
+        })?
+    };
+    let mut meta = Meta::new();
+    meta.file = Some(resolved.path.to_string_lossy().into_owned());
+    meta.warnings = warnings;
+    output::write_success(ClipAddData { changed, record }, pretty, meta)
+        .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
+    Ok(0)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ClipListData {
+    pub items: Vec<paper_core::ClipListItem>,
+    pub count: usize,
+    pub total: usize,
+}
+
+pub fn list(
+    tag: Option<String>,
+    impact: Option<Impact>,
+    status_filter: StatusFilter,
+    limit: usize,
+    _format: OutputFormat,
+    where_loc: Option<String>,
+    file: Option<PathBuf>,
+    pretty: bool,
+) -> AppResult<i32> {
+    let resolved = store::discover_clips(file)?;
+    let folded = match store::with_shared(&resolved.path, |log| {
+        let bytes = store::read_bytes(log, &resolved.path)?;
+        Ok(store::fold_clip_bytes(&bytes))
+    }) {
+        Ok(f) => f,
+        Err(e) if e.code == "not_found" => {
+            let meta = Meta::new();
+            output::write_success(ClipListData { items: vec![], count: 0, total: 0 }, pretty, meta)
+                .map_err(|e2| AppError::from_io(e2, std::path::Path::new("stdout")))?;
+            return Ok(0);
+        }
+        Err(e) => return Err(e),
+    };
+    let mut items: Vec<_> = folded.items.into_iter()
+        .filter(|item| match status_filter {
+            StatusFilter::Open => item.status == ClipStatus::Open,
+            StatusFilter::Promoted => item.status == ClipStatus::Promoted,
+            StatusFilter::Noted => item.status == ClipStatus::Noted,
+            StatusFilter::All => true,
+        })
+        .filter(|item| tag.as_ref().is_none_or(|t| item.clip.tags.contains(t)))
+        .filter(|item| impact.as_ref().is_none_or(|i| item.clip.impact == *i))
+        .filter(|item| where_loc.as_ref().is_none_or(|w| item.clip.where_loc.as_deref() == Some(w.as_str())))
+        .collect();
+    let total = items.len();
+    items.truncate(limit);
+    let count = items.len();
+    let meta = Meta::new();
+    output::write_success(ClipListData { items, count, total }, pretty, meta)
+        .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
+    Ok(0)
+}
+
+pub fn promote(id: String, file: Option<PathBuf>, pretty: bool, now: Timestamp) -> AppResult<i32> {
+    let resolved = store::discover_clips(file)?;
+    let ts = format_timestamp(now);
+    store::with_exclusive(&resolved.path, false, |log| {
+        let bytes = store::read_bytes(log, &resolved.path)?;
+        let folded = store::fold_clip_bytes(&bytes);
+        let item = folded.items.iter().find(|i| i.clip.id.starts_with(&id))
+            .ok_or_else(|| AppError::not_found(
+                format!("clip not found: {}", id),
+                "Run `paperclip list` to find valid IDs.",
+            ))?;
+        if item.status == ClipStatus::Promoted {
+            return Ok(());
+        }
+        let event = serde_json::json!({
+            "kind": "promote",
+            "id": item.clip.id,
+            "ts": ts,
+        });
+        store::append_json(log, &resolved.path, &bytes, &event)?;
+        Ok(())
+    })?;
+    let meta = Meta::new();
+    output::write_success(serde_json::json!({"ok": true, "id": id}), pretty, meta)
+        .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
+    Ok(0)
+}
+
+pub fn note(id: String, text: String, file: Option<PathBuf>, pretty: bool, now: Timestamp) -> AppResult<i32> {
+    let resolved = store::discover_clips(file)?;
+    let ts = format_timestamp(now);
+    store::with_exclusive(&resolved.path, false, |log| {
+        let bytes = store::read_bytes(log, &resolved.path)?;
+        let folded = store::fold_clip_bytes(&bytes);
+        let item = folded.items.iter().find(|i| i.clip.id.starts_with(&id))
+            .ok_or_else(|| AppError::not_found(
+                format!("clip not found: {}", id),
+                "Run `paperclip list` to find valid IDs.",
+            ))?;
+        let event = serde_json::json!({
+            "kind": "note",
+            "id": item.clip.id,
+            "ts": ts,
+            "text": text,
+        });
+        store::append_json(log, &resolved.path, &bytes, &event)?;
+        Ok(())
+    })?;
+    let meta = Meta::new();
+    output::write_success(serde_json::json!({"ok": true, "id": id}), pretty, meta)
+        .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
+    Ok(0)
+}
+
+pub fn top(limit: usize, file: Option<PathBuf>, pretty: bool) -> AppResult<i32> {
+    let resolved = store::discover_clips(file)?;
+    let folded = match store::with_shared(&resolved.path, |log| {
+        let bytes = store::read_bytes(log, &resolved.path)?;
+        Ok(store::fold_clip_bytes(&bytes))
+    }) {
+        Ok(f) => f,
+        Err(e) if e.code == "not_found" => {
+            let meta = Meta::new();
+            output::write_success(serde_json::json!({"items": [], "count": 0}), pretty, meta)
+                .map_err(|e2| AppError::from_io(e2, std::path::Path::new("stdout")))?;
+            return Ok(0);
+        }
+        Err(e) => return Err(e),
+    };
+    use std::collections::BTreeMap;
+    let mut by_tag: BTreeMap<String, usize> = BTreeMap::new();
+    let mut by_where: BTreeMap<String, usize> = BTreeMap::new();
+    for item in &folded.items {
+        if item.status == ClipStatus::Open {
+            for tag in &item.clip.tags {
+                *by_tag.entry(tag.clone()).or_insert(0) += 1;
+            }
+            if let Some(ref w) = item.clip.where_loc {
+                *by_where.entry(w.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+    let top_tags: Vec<_> = by_tag.into_iter().rev().take(limit).collect();
+    let top_wheres: Vec<_> = by_where.into_iter().rev().take(limit).collect();
+    let meta = Meta::new();
+    output::write_success(serde_json::json!({
+        "by_tag": top_tags,
+        "by_where": top_wheres,
+        "total_open": folded.items.iter().filter(|i| i.status == ClipStatus::Open).count(),
+    }), pretty, meta)
+        .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
+    Ok(0)
+}
+
+pub fn doctor(file: Option<PathBuf>, pretty: bool) -> AppResult<i32> {
+    let resolved = store::discover_clips(file)?;
+    let folded = match store::with_shared(&resolved.path, |log| {
+        let bytes = store::read_bytes(log, &resolved.path)?;
+        Ok(store::fold_clip_bytes(&bytes))
+    }) {
+        Ok(f) => f,
+        Err(e) if e.code == "not_found" => {
+            let meta = Meta::new();
+            output::write_success(serde_json::json!({"healthy": true, "findings": [], "checked_lines": 0}), pretty, meta)
+                .map_err(|e2| AppError::from_io(e2, std::path::Path::new("stdout")))?;
+            return Ok(0);
+        }
+        Err(e) => return Err(e),
+    };
+    let mut findings = Vec::new();
+    for w in &folded.warnings {
+        findings.push(serde_json::json!({"kind": "warning", "message": w}));
+    }
+    let healthy = findings.is_empty();
+    let meta = Meta::new();
+    output::write_success(serde_json::json!({
+        "healthy": healthy,
+        "findings": findings,
+        "total_clips": folded.items.len(),
+    }), pretty, meta)
+        .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
+    Ok(i32::from(!healthy))
+}
