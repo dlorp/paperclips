@@ -1,2 +1,0 @@
-{"kind":"clip","id":"cl_84d02ca73680","ts":"2026-07-12T02:57:15.987Z","agent":"hyph4","text":"workspace extraction preserved papercuts byte-compat on first try","tags":["architecture"],"impact":"solid","where":"paper-core","cwd":".","repo":"."}
-{"id":"cl_84d02ca73680","kind":"promote","ts":"2026-07-12T03:34:16.413Z"}
