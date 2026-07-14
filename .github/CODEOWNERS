@@ -1,0 +1,5 @@
+# CODEOWNERS — require dlorp review for CI/workflow changes
+# NOTE: Without GitHub Pro branch protection, this is advisory only.
+
+# CI workflows — dlorp must approve changes
+.github/    @dlorp
