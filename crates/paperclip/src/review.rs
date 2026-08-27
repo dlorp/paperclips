@@ -638,6 +638,47 @@ fn truncate_text(text: &str, max_len: usize) -> String {
     if text.len() <= max_len {
         text.to_string()
     } else {
-        format!("{}…", &text[..max_len.saturating_sub(1)])
+        // `end` is a byte index; walk back to the nearest char boundary so
+        // multi-byte chars (em dashes, CJK, etc.) in log text can't panic
+        // the slice below.
+        let mut end = max_len.saturating_sub(1);
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &text[..end])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_text;
+
+    #[test]
+    fn truncates_ascii_at_byte_limit() {
+        assert_eq!(truncate_text("short", 72), "short");
+        assert_eq!(truncate_text(&"x".repeat(72), 72), "x".repeat(72));
+        assert_eq!(
+            truncate_text(&"x".repeat(73), 72),
+            format!("{}…", "x".repeat(71))
+        );
+    }
+
+    #[test]
+    fn truncation_never_panics_on_em_dash_at_cut_point() {
+        // The em dash is 3 bytes; byte 71 of a 73-byte string lands mid-char.
+        let text = format!("{}—tail", "a".repeat(70));
+        assert_eq!(truncate_text(&text, 72), format!("{}…", "a".repeat(70)));
+    }
+
+    #[test]
+    fn truncation_respects_other_multibyte_chars() {
+        // CJK chars are 3 bytes each; cut point must stay on a boundary.
+        let text = "中".repeat(30); // 90 bytes
+        assert_eq!(truncate_text(&text, 72), format!("{}…", "中".repeat(23)));
+    }
+
+    #[test]
+    fn zero_max_len_does_not_panic() {
+        assert_eq!(truncate_text("abc", 0), "…");
     }
 }
