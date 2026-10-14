@@ -1,5 +1,9 @@
 # paperclips
 
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.89%2B-orange)](Cargo.toml)
+[![Tests](https://img.shields.io/badge/tests-43%20passing-brightgreen)]()
+
 Two-directional friction log for AI agents: record what breaks, record what works, then review both together.
 
 ## Why
