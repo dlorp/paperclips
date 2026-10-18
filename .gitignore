@@ -4,3 +4,8 @@ SESSION_NOTES.md
 
 .paperclips.jsonl
 .papercuts.jsonl
+AGENTS.md
+.claude/
+docs/plans/
+model-performance-journal.md
+SESSION_NOTES.md
