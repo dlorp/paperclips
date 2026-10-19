@@ -28,6 +28,49 @@ Clips:  add -> [someone codifies it] -> promote
 
 When both logs share a `--where` on the same component, `paperclip review` surfaces it as an **Overlap**: the highest-information record in the system.
 
+## Give your agents the pen
+
+A friction log only works if it gets written to while the context is still hot. Paste this into your `CLAUDE.md`, `AGENTS.md`, or system prompt:
+
+```markdown
+## Paperclips
+
+Log both directions during work, not after it.
+
+Friction, meaning a dead-end tool call, a misleading doc, a footgun config, a
+missing helper:
+
+    papercuts add "<what you hit and what would have prevented it>" \
+      --tag <area> --severity <minor|major|blocker> --where <component>
+
+Wins, meaning something that exceeded expectations, saved real time, or turned
+out to be more capable than its docs claimed:
+
+    paperclip add "<what it did and the concrete value it delivered>" \
+      --tag <area> --impact <trivial|solid|huge> --where <component>
+
+`--where` names the component the record is about, in the same shape as the
+path you would point a reviewer at: `parser/env`, `writer/atomic`,
+`cli/parse`. It is the join key. When a cut and a clip carry the same
+`--where`, review pairs them as an Overlap and asks whether that surface is
+load-bearing and sharp-edged at the same time. Without `--where`, a record can
+only join at tag level, which is the weakest signal in the system.
+
+File it and keep working. Do not stop the task to write a record. "Worked
+correctly" is not a win; name what it did for you. Severity: minor for an
+annoyance, major for a time sink, blocker for a hard wall. Impact: trivial for
+a nice surprise, solid for real time saved, huge for a change of approach.
+
+End of session: if you changed code or hit friction, leave at least one cut or
+clip in the log. If nothing is worth recording, say "nothing to reflect" out
+loud instead of passing over it in silence.
+
+The full contract is one command away: `papercuts schema` and
+`paperclip schema` list every flag, record field, and exit code.
+```
+
+Then read it back on a schedule that fits the project: `paperclip review --format md` for a disposition worksheet over every overlap, or `papercuts list --format md` for the open cuts alone.
+
 ## Install
 
 The workspace ships two binaries, so each install names its package:
