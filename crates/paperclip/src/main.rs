@@ -2,11 +2,11 @@
 // Companion to papercuts: papercuts logs friction, paperclip logs wins.
 
 use clap::Parser;
-use paper_core::error::AppError;
 use paper_core::Impact;
+use paper_core::error::AppError;
 
-mod review;
 mod commands;
+mod review;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -36,6 +36,8 @@ pub enum Command {
     List(ListArgs),
     Promote(PromoteArgs),
     Note(NoteArgs),
+    Resolve(ResolveArgs),
+    Wontfix(WontfixArgs),
     Top(TopArgs),
     Review(ReviewArgs),
     Schema,
@@ -74,12 +76,17 @@ pub struct ListArgs {
     pub format: OutputFormat,
     #[arg(long = "where", value_name = "COMPONENT")]
     pub where_loc: Option<String>,
+    /// Only clips with no terminal disposition in the feedback ledger.
+    #[arg(long)]
+    pub unresolved: bool,
 }
 
 #[derive(Debug, clap::Args)]
 pub struct PromoteArgs {
     #[arg(value_name = "ID")]
     pub id: String,
+    #[arg(long)]
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -88,6 +95,50 @@ pub struct NoteArgs {
     pub id: String,
     #[arg(value_name = "TEXT")]
     pub text: String,
+    #[arg(long)]
+    pub agent: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ResolveArgs {
+    #[arg(value_name = "ID")]
+    pub id: String,
+    #[arg(long)]
+    pub agent: Option<String>,
+    #[arg(long)]
+    pub dry_run: bool,
+    #[arg(long)]
+    pub resolution: Option<String>,
+    #[arg(long)]
+    pub linked_task: Option<String>,
+    #[arg(long)]
+    pub resolved_by: Option<String>,
+    #[arg(long)]
+    pub verification_method: Option<String>,
+    #[arg(long)]
+    pub verification_result: Option<String>,
+    #[arg(long)]
+    pub change: Option<String>,
+    #[arg(long = "class", value_enum)]
+    pub change_class: Option<paper_core::cli::ChangeClass>,
+    #[arg(long, value_enum)]
+    pub channel: Option<paper_core::cli::Channel>,
+    #[arg(long)]
+    pub task: Option<String>,
+    #[arg(long)]
+    pub owner: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct WontfixArgs {
+    #[arg(value_name = "ID")]
+    pub id: String,
+    #[arg(long)]
+    pub reason: String,
+    #[arg(long)]
+    pub owner: Option<String>,
+    #[arg(long)]
+    pub task: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -102,12 +153,13 @@ pub struct ReviewArgs {
     pub format: OutputFormat,
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum StatusFilter {
     Open,
     Promoted,
     Noted,
+    Resolved,
+    Wontfix,
     All,
 }
 
@@ -138,25 +190,63 @@ fn main() {
         Command::Review(args) => review::run(args.format, None, cli.file, cli.pretty)
             .unwrap_or_else(|error| paper_core::output::write_error(&error)),
         Command::Add(args) => commands::add(
-            args.what, args.agent, args.tags, args.impact, args.dry_run,
-            args.force, args.where_loc, cli.file, cli.pretty,
+            args.what,
+            args.agent,
+            args.tags,
+            args.impact,
+            args.dry_run,
+            args.force,
+            args.where_loc,
+            cli.file,
+            cli.pretty,
             paper_core::effective_now().unwrap(),
-        ).unwrap_or_else(|error| paper_core::output::write_error(&error)),
+        )
+        .unwrap_or_else(|error| paper_core::output::write_error(&error)),
         Command::List(args) => commands::list(
-            args.tag, args.impact, args.status, args.limit, args.format,
-            args.where_loc, cli.file, cli.pretty,
-        ).unwrap_or_else(|error| paper_core::output::write_error(&error)),
+            args.tag,
+            args.impact,
+            args.status,
+            args.limit,
+            args.format,
+            args.where_loc,
+            args.unresolved,
+            cli.file,
+            cli.pretty,
+        )
+        .unwrap_or_else(|error| paper_core::output::write_error(&error)),
         Command::Promote(args) => commands::promote(
-            args.id, cli.file, cli.pretty,
+            args.id,
+            args.agent,
+            cli.file,
+            cli.pretty,
             paper_core::effective_now().unwrap(),
-        ).unwrap_or_else(|error| paper_core::output::write_error(&error)),
+        )
+        .unwrap_or_else(|error| paper_core::output::write_error(&error)),
         Command::Note(args) => commands::note(
-            args.id, args.text, cli.file, cli.pretty,
+            args.id,
+            args.text,
+            args.agent,
+            cli.file,
+            cli.pretty,
             paper_core::effective_now().unwrap(),
-        ).unwrap_or_else(|error| paper_core::output::write_error(&error)),
-        Command::Top(args) => commands::top(
-            args.limit, cli.file, cli.pretty,
-        ).unwrap_or_else(|error| paper_core::output::write_error(&error)),
+        )
+        .unwrap_or_else(|error| paper_core::output::write_error(&error)),
+        Command::Resolve(args) => commands::resolve(
+            args,
+            cli.file,
+            cli.pretty,
+            paper_core::effective_now().unwrap(),
+        )
+        .unwrap_or_else(|error| paper_core::output::write_error(&error)),
+        Command::Wontfix(args) => commands::wontfix(
+            args,
+            cli.file,
+            cli.pretty,
+            paper_core::effective_now().unwrap(),
+        )
+        .unwrap_or_else(|error| paper_core::output::write_error(&error)),
+        Command::Top(args) => commands::top(args.limit, cli.file, cli.pretty)
+            .unwrap_or_else(|error| paper_core::output::write_error(&error)),
         Command::Doctor => commands::doctor(cli.file, cli.pretty)
             .unwrap_or_else(|error| paper_core::output::write_error(&error)),
         Command::Schema => {
@@ -166,9 +256,11 @@ fn main() {
                 "description": "Log wins and clips — the positive side of the agent friction log.",
                 "commands": {
                     "add": {"flags": {"--impact": "nice|solid|huge; default nice", "--tag": "TAG; repeatable", "--agent": "NAME", "--dry-run": "boolean", "--where": "COMPONENT"}, "positional": "TEXT or -"},
-                    "list": {"flags": {"--tag": "TAG", "--impact": "nice|solid|huge", "--status": "open|promoted|noted|all; default open", "--limit": "N; default 50", "--format": "json|md; default json", "--where": "COMPONENT"}},
-                    "promote": {"positional": "ID"},
-                    "note": {"positional": "ID TEXT"},
+                    "list": {"flags": {"--tag": "TAG", "--impact": "nice|solid|huge (trivial accepted as nice)", "--status": "open|promoted|noted|resolved|wontfix|all; default open", "--limit": "N; default 50", "--format": "json|md; default json", "--where": "COMPONENT", "--unresolved": "boolean"}},
+                    "promote": {"positional": "ID", "flags": {"--agent": "NAME"}},
+                    "note": {"positional": "ID TEXT", "flags": {"--agent": "NAME"}},
+                    "resolve": {"positional": "ID", "flags": {"--resolution": "TEXT; CAPA required unless --change", "--linked-task": "TASK|null", "--resolved-by": "NAME; CAPA required unless --owner", "--verification-method": "TEXT; CAPA required", "--verification-result": "TEXT; CAPA required", "--change": "TEXT; legacy", "--class": "code|standard|cron|skill|doc|config; legacy", "--channel": "kanban|review|discord; legacy", "--task": "TASK; legacy", "--owner": "NAME; legacy"}},
+                    "wontfix": {"positional": "ID", "flags": {"--reason": "TEXT; required", "--owner": "NAME", "--task": "TASK"}},
                     "top": {"flags": {"--limit": "N; default 10"}},
                     "review": {"flags": {"--format": "json|md; default json"}, "description": "Reads both .papercuts.jsonl and .paperclips.jsonl. Emits Fix/Keep/Overlaps digest."},
                     "schema": {"description": "Print this contract."},
@@ -180,7 +272,7 @@ fn main() {
                     "what": "string",
                     "tag": "string",
                     "impact": "nice|solid|huge",
-                    "status": "open|promoted|noted",
+                    "status": "open|promoted|noted|resolved|wontfix",
                     "ts": "RFC3339 UTC milliseconds",
                     "agent": "string",
                     "notes": ["string"]
@@ -194,7 +286,6 @@ fn main() {
             }
             0
         }
-
     };
     std::process::exit(code);
 }

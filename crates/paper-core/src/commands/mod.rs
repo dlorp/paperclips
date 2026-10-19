@@ -3,6 +3,7 @@ pub mod doctor;
 pub mod list;
 pub mod resolve;
 pub mod schema;
+pub mod wontfix;
 
 use crate::cli::{Cli, Command};
 use crate::error::{AppError, AppResult};
@@ -14,6 +15,7 @@ pub fn run(cli: Cli, now: Timestamp) -> AppResult<i32> {
         Command::Add(args) => add::run(args, cli.file, cli.pretty, now),
         Command::List(args) => list::run(args, cli.file, cli.pretty, now),
         Command::Resolve(args) => resolve::run(args, cli.file, cli.pretty, now),
+        Command::Wontfix(args) => wontfix::run(args, cli.file, cli.pretty, now),
         Command::Schema { target } => {
             output::write_success(schema::contract(target), cli.pretty, output::Meta::new())
                 .map_err(|error| AppError::from_io(error, std::path::Path::new("stdout")))?;

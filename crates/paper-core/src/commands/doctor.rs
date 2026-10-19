@@ -75,14 +75,9 @@ pub fn run(file: Option<PathBuf>, pretty: bool, scan: bool) -> AppResult<i32> {
             let bytes = store::read_bytes(log, &resolved.path)?;
             Ok(scan_for_secrets(&bytes))
         });
-        match scan_result {
-            Ok(findings) => {
-                for finding in findings {
-                    data.findings.push(finding);
-                    data.healthy = false;
-                }
-            }
-            Err(error) => return Err(error),
+        for finding in scan_result? {
+            data.findings.push(finding);
+            data.healthy = false;
         }
     }
     let exit = i32::from(!data.healthy);
@@ -102,14 +97,14 @@ fn scan_for_secrets(bytes: &[u8]) -> Vec<Finding> {
             continue;
         }
         let line = index + 1;
-        if let Ok(text) = std::str::from_utf8(raw) {
-            if let Some(pattern) = crate::secrets::scan(text) {
-                findings.push(Finding {
-                    line,
-                    kind: "secret_found".into(),
-                    message: format!("potential secret detected: {pattern}"),
-                });
-            }
+        if let Ok(text) = std::str::from_utf8(raw)
+            && let Some(pattern) = crate::secrets::scan(text)
+        {
+            findings.push(Finding {
+                line,
+                kind: "secret_found".into(),
+                message: format!("potential secret detected: {pattern}"),
+            });
         }
     }
     findings

@@ -30,6 +30,7 @@ pub enum Command {
     Add(AddArgs),
     List(ListArgs),
     Resolve(ResolveArgs),
+    Wontfix(WontfixArgs),
     Schema {
         #[arg(value_enum, default_value_t = SchemaTarget::All)]
         target: SchemaTarget,
@@ -79,24 +80,114 @@ pub struct ListArgs {
     pub format: OutputFormat,
     #[arg(long = "where", value_name = "COMPONENT")]
     pub where_loc: Option<String>,
+    /// Only items with no terminal disposition in the feedback ledger.
+    #[arg(long)]
+    pub unresolved: bool,
+    /// Print open-cut severity counts and stop (unless a filter was supplied).
+    #[arg(long)]
+    pub digest: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct ResolveArgs {
     #[arg(value_name = "ID")]
     pub id: String,
+    /// Freeform note stored on the resolve event in the source log.
     #[arg(long)]
     pub note: Option<String>,
     #[arg(long)]
     pub agent: Option<String>,
     #[arg(long)]
     pub dry_run: bool,
+    /// What fixed the friction (CAPA: required, or legacy --change).
+    #[arg(long)]
+    pub resolution: Option<String>,
+    /// Related task id, or the literal `null` for a no-action resolution.
+    #[arg(long)]
+    pub linked_task: Option<String>,
+    /// Who resolved it (CAPA: required, or legacy --owner).
+    #[arg(long)]
+    pub resolved_by: Option<String>,
+    /// How effectiveness was verified (CAPA: required).
+    #[arg(long)]
+    pub verification_method: Option<String>,
+    /// What the verification found (CAPA: required).
+    #[arg(long)]
+    pub verification_result: Option<String>,
+    /// Legacy: sha, path, or version identifying the fix.
+    #[arg(long)]
+    pub change: Option<String>,
+    /// Legacy: what kind of artifact changed.
+    #[arg(long = "class", value_enum)]
+    pub change_class: Option<ChangeClass>,
+    /// Legacy: how the fix was delivered.
+    #[arg(long, value_enum)]
+    pub channel: Option<Channel>,
+    /// Legacy: task id (maps to linked_task).
+    #[arg(long)]
+    pub task: Option<String>,
+    /// Legacy: resolving owner (maps to resolved_by).
+    #[arg(long)]
+    pub owner: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct WontfixArgs {
+    #[arg(value_name = "ID")]
+    pub id: String,
+    #[arg(long)]
+    pub reason: String,
+    #[arg(long)]
+    pub owner: Option<String>,
+    #[arg(long)]
+    pub task: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ChangeClass {
+    Code,
+    Standard,
+    Cron,
+    Skill,
+    Doc,
+    Config,
+}
+
+impl ChangeClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Code => "code",
+            Self::Standard => "standard",
+            Self::Cron => "cron",
+            Self::Skill => "skill",
+            Self::Doc => "doc",
+            Self::Config => "config",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Channel {
+    Kanban,
+    Review,
+    Discord,
+}
+
+impl Channel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Kanban => "kanban",
+            Self::Review => "review",
+            Self::Discord => "discord",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum StatusFilter {
     Open,
     Resolved,
+    Wontfix,
     All,
 }
 
@@ -163,11 +254,11 @@ mod tests {
     #[test]
     fn parser_accepts_where_flag() {
         let cli =
-            Cli::try_parse_from(["papercuts", "add", "ouch", "--where", "bridge-trigger"]).unwrap();
+            Cli::try_parse_from(["papercuts", "add", "ouch", "--where", "sync-worker"]).unwrap();
         let Command::Add(args) = cli.command else {
             panic!("expected add")
         };
-        assert_eq!(args.where_loc.as_deref(), Some("bridge-trigger"));
+        assert_eq!(args.where_loc.as_deref(), Some("sync-worker"));
 
         let cli =
             Cli::try_parse_from(["papercuts", "list", "--where", "skills/chronicle"]).unwrap();

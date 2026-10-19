@@ -145,10 +145,10 @@ pub fn run(
         }
     }
     for clip in &open_clips {
-        if let Some(ref w) = clip.clip.where_loc {
-            if let Some(entry) = exact_anchors.get_mut(w) {
-                entry.1.push(clip);
-            }
+        if let Some(w) = clip.clip.where_loc.as_ref()
+            && let Some(entry) = exact_anchors.get_mut(w)
+        {
+            entry.1.push(clip);
         }
     }
     for (anchor, (cuts, clips)) in &exact_anchors {
