@@ -4,5 +4,6 @@ SESSION_NOTES.md
 
 .paperclips.jsonl
 .papercuts.jsonl
+.feedback-resolutions.jsonl
 model-performance-journal.md
 .DS_Store
