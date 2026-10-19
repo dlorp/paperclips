@@ -7,3 +7,4 @@ SESSION_NOTES.md
 .feedback-resolutions.jsonl
 model-performance-journal.md
 .DS_Store
+__pycache__/
