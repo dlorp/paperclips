@@ -477,28 +477,28 @@ fn write_markdown(
     let mut out = std::io::BufWriter::new(std::io::stdout().lock());
 
     // Legend
-    writeln!(out, "Overlap shapes — read each pair and assign one:")
+    writeln!(out, "Overlap shapes: read each pair and assign one:")
         .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
     writeln!(
         out,
-        "  A. Same component, different aspect — clip praises the part, cut names a sharp"
+        "  A. Same component, different aspect. Clip praises the part, cut names a sharp"
     )
     .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
     writeln!(
         out,
-        "     edge on it. → Fix the edge, keep the part. The clip is a guardrail on the"
+        "     edge on it. Fix the edge, keep the part. The clip is a guardrail on the"
     )
     .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
     writeln!(out, "     remediation: it tells you what NOT to remove.")
         .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
     writeln!(
         out,
-        "  B. Value confirmed, access broken — clip proves the asset's worth, cut says"
+        "  B. Value confirmed, access broken. Clip proves the asset's worth, cut says"
     )
     .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
     writeln!(
         out,
-        "     finding/using it is the problem. → Amplify: index, rename, document."
+        "     finding/using it is the problem. Amplify: index, rename, document."
     )
     .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
     writeln!(
@@ -508,12 +508,12 @@ fn write_markdown(
     .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
     writeln!(
         out,
-        "  C. Context-dependence — the same *behavior* is clipped by one agent/workflow"
+        "  C. Context-dependence. The same *behavior* is clipped by one agent/workflow"
     )
     .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
     writeln!(
         out,
-        "     and cut by another. → Neither fix nor remove: add a mode or config flag."
+        "     and cut by another. Neither fix nor remove: add a mode or config flag."
     )
     .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
     writeln!(
@@ -561,7 +561,7 @@ fn write_markdown(
             let text_preview = truncate_text(&cut.text, 72);
             writeln!(
                 out,
-                "  CUT  [{:<7}] {} — {}",
+                "  CUT  [{:<7}] {}: {}",
                 cut.severity, cut.id, text_preview
             )
             .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
@@ -574,7 +574,7 @@ fn write_markdown(
                 .unwrap_or_default();
             writeln!(
                 out,
-                "  CLIP [{:<7}] {} — {}{}",
+                "  CLIP [{:<7}] {}: {}{}",
                 clip.impact, clip.id, text_preview, reports_str
             )
             .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
@@ -597,7 +597,7 @@ fn write_markdown(
             let text_preview = truncate_text(&cut.text, 72);
             writeln!(
                 out,
-                "  CUT  [{:<7}] {} — {}",
+                "  CUT  [{:<7}] {}: {}",
                 cut.severity, cut.id, text_preview
             )
             .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;
@@ -618,7 +618,7 @@ fn write_markdown(
             let text_preview = truncate_text(&clip.text, 72);
             writeln!(
                 out,
-                "  CLIP [{:<7}] {} — {}",
+                "  CLIP [{:<7}] {}: {}",
                 clip.impact, clip.id, text_preview
             )
             .map_err(|e| AppError::from_io(e, std::path::Path::new("stdout")))?;

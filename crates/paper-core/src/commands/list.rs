@@ -254,7 +254,7 @@ fn write_markdown(items: &[ListItem], warnings: &[String]) -> AppResult<()> {
             };
             writeln!(
                 output,
-                "- [{id}] {} — {}, {}{tags}",
+                "- [{id}] {}: {}, {}{tags}",
                 item.cut.text, item.cut.agent, item.cut.ts
             )
             .map_err(|error| AppError::from_io(error, std::path::Path::new("stdout")))?;

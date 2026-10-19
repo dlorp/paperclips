@@ -249,7 +249,7 @@ fn list_filters_sorts_limits_since_and_markdown() {
     assert!(markdown.stderr.is_empty());
     let markdown = String::from_utf8(markdown.stdout).unwrap();
     assert!(markdown.starts_with("## Major\n"));
-    assert!(markdown.contains("new major — tester"));
+    assert!(markdown.contains("new major: tester"));
     assert!(serde_json::from_str::<Value>(&markdown).is_err());
     error(
         &run_file(&file, &["list", "--since", "2026-07-09"]),

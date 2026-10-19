@@ -12,7 +12,7 @@ mod review;
 #[command(
     name = "paperclip",
     version,
-    about = "Log wins and clips — the positive side of the agent friction log.",
+    about = "Log wins and clips. The positive side of the agent friction log.",
     long_about = None,
     arg_required_else_help = true,
     subcommand_required = true,
@@ -253,7 +253,7 @@ fn main() {
             let schema = serde_json::json!({
                 "contract": 1,
                 "name": "paperclip",
-                "description": "Log wins and clips — the positive side of the agent friction log.",
+                "description": "Log wins and clips. The positive side of the agent friction log.",
                 "commands": {
                     "add": {"flags": {"--impact": "nice|solid|huge; default nice", "--tag": "TAG; repeatable", "--agent": "NAME", "--dry-run": "boolean", "--where": "COMPONENT"}, "positional": "TEXT or -"},
                     "list": {"flags": {"--tag": "TAG", "--impact": "nice|solid|huge (trivial accepted as nice)", "--status": "open|promoted|noted|resolved|wontfix|all; default open", "--limit": "N; default 50", "--format": "json|md; default json", "--where": "COMPONENT", "--unresolved": "boolean"}},
