@@ -14,7 +14,8 @@ Forked from [treygoff24/papercuts](https://github.com/treygoff24/papercuts) (MIT
 
 ```bash
 cargo build --workspace
-cargo test -p papercuts --test cli
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 ## Key concepts
@@ -40,7 +41,7 @@ Review reads each overlap pair and assigns a shape:
 
 ## Canonical example (Shape A)
 
-The `bridge-trigger` component in this repo's `.paperclips.jsonl` demonstrates a clean Shape A overlap:
+An overlap on the same `--where` reads like this (illustrative pair):
 
 ```
 CUT:  "fires without priority check" — sharp edge
@@ -52,4 +53,4 @@ CLIP: "auto-dispatches useful work, cleared the backlog unattended" — value de
 
 - Append-only. stdout = data only. stderr = errors only.
 - Old logs without `where` still work (review treats them as unjoinable).
-- The `.paperclips.jsonl` in this repo is dogfood — 3 entries (2 clips, 1 cut) demonstrating production format.
+- Logs are local working data. `.papercuts.jsonl` and `.paperclips.jsonl` are gitignored and never committed.
