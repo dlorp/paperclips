@@ -149,9 +149,7 @@ impl AppError {
     pub fn secret_detected(pattern: &str) -> Self {
         Self::new(
             "secret_detected",
-            format!(
-                "potential secret detected in text: {pattern}. Use --force to append anyway."
-            ),
+            format!("potential secret detected in text: {pattern}. Use --force to append anyway."),
             false,
             "Remove the secret from the text, or pass --force to append anyway.",
         )

@@ -178,7 +178,7 @@ pub fn find_repo_root(start: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-fn absolute(cwd: &Path, path: PathBuf) -> PathBuf {
+pub fn absolute(cwd: &Path, path: PathBuf) -> PathBuf {
     let joined = if path.is_absolute() {
         path
     } else {
@@ -300,6 +300,92 @@ pub fn append_json<T: serde::Serialize>(
         return Err(AppError::from_io(error, path));
     }
     Ok(())
+}
+
+// ── Recurrence detection ─────────────────────────────────────────────
+
+/// Markers that identify the historical "no GNU timeout on macOS" failure
+/// class. Kept in sync with the canonical Python logger.
+const TIMEOUT_MARKERS: [&str; 4] = [
+    "command not found",
+    "zsh has no",
+    "gtimeout",
+    "no gnu timeout",
+];
+
+fn timeout_regex() -> &'static regex::Regex {
+    static TIMEOUT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    TIMEOUT.get_or_init(|| regex::Regex::new(r"(?i)\btimeout\b").expect("valid timeout regex"))
+}
+
+/// Lowercase, strip punctuation, collapse whitespace. Used for identical-text
+/// recurrence matching.
+pub fn normalize_text(text: &str) -> String {
+    let mut normalized = String::with_capacity(text.len());
+    let mut pending_space = false;
+    for character in text.chars() {
+        if character.is_ascii_alphanumeric() {
+            if pending_space && !normalized.is_empty() {
+                normalized.push(' ');
+            }
+            pending_space = false;
+            normalized.push(character.to_ascii_lowercase());
+        } else {
+            pending_space = true;
+        }
+    }
+    normalized
+}
+
+/// True when the text names a timeout binary and a Unix absence marker in the
+/// same sentence or clause. Generic mentions of "timeout" never link alone.
+pub fn signature_match(text: &str) -> bool {
+    for segment in text.split(['.', ';', '!', '?', '\n']) {
+        let segment = segment.trim().to_ascii_lowercase();
+        if segment.is_empty() || !timeout_regex().is_match(&segment) {
+            continue;
+        }
+        if TIMEOUT_MARKERS
+            .iter()
+            .any(|marker| segment.contains(marker))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Earliest existing cut that is the same failure: identical normalized text,
+/// or the same known failure-class signature. Read-only; the source log is
+/// never rewritten. Returns the anchor id, or None.
+pub fn find_recurrence_anchor(bytes: &[u8], text: &str) -> Option<String> {
+    let normalized = normalize_text(text);
+    let signed = signature_match(text);
+    if normalized.is_empty() && !signed {
+        return None;
+    }
+    for raw in bytes.split(|byte| *byte == b'\n') {
+        if raw.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_slice::<Value>(raw) else {
+            continue;
+        };
+        if value.get("kind").and_then(Value::as_str) != Some("cut") {
+            continue;
+        }
+        let Some(id) = value.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let prior = value.get("text").and_then(Value::as_str).unwrap_or("");
+        if !normalized.is_empty() && normalize_text(prior) == normalized {
+            return Some(id.to_string());
+        }
+        if signed && signature_match(prior) {
+            return Some(id.to_string());
+        }
+    }
+    None
 }
 
 // ── Cut fold ─────────────────────────────────────────────────────────
@@ -673,7 +759,7 @@ mod tests {
         let clip = serde_json::json!({
             "kind":"clip", "id":"cl_aabbccdd0011", "ts":"2026-07-09T00:00:00.000Z",
             "agent":"a", "text":"works great", "tags":["tooling"], "impact":"solid",
-            "where":"bridge-trigger", "cwd":"/tmp", "repo":null
+            "where":"sync-worker", "cwd":"/tmp", "repo":null
         });
         let promote = serde_json::json!({
             "kind":"promote", "id":"cl_aabbccdd0011", "ts":"2026-07-10T00:00:00.000Z",
@@ -691,7 +777,7 @@ mod tests {
         assert_eq!(folded.items[0].status, ClipStatus::Open);
         assert_eq!(
             folded.items[0].clip.where_loc.as_deref(),
-            Some("bridge-trigger")
+            Some("sync-worker")
         );
 
         // promoted clip

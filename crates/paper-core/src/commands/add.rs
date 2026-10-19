@@ -32,10 +32,10 @@ pub fn run(args: AddArgs, file: Option<PathBuf>, pretty: bool, now: Timestamp) -
             "Shorten the papercut text to at most 10000 UTF-8 bytes.",
         ));
     }
-    if !args.force {
-        if let Some(pattern) = crate::secrets::scan(&text) {
-            return Err(AppError::secret_detected(pattern));
-        }
+    if !args.force
+        && let Some(pattern) = crate::secrets::scan(&text)
+    {
+        return Err(AppError::secret_detected(pattern));
     }
     if args
         .agent
@@ -73,15 +73,22 @@ pub fn run(args: AddArgs, file: Option<PathBuf>, pretty: bool, now: Timestamp) -
         ),
         repo: resolved.repo.as_ref().map(|_| ".".to_string()),
         where_loc,
+        recurrence_of: None,
     };
 
     let mut warnings = Vec::new();
     let (changed, record) = if args.dry_run {
+        let mut record = record;
+        if let Ok(bytes) = std::fs::read(&resolved.path) {
+            record.recurrence_of = store::find_recurrence_anchor(&bytes, &record.text);
+        }
         warnings.push("dry run; no record appended".into());
         (false, record)
     } else {
         store::with_exclusive(&resolved.path, true, |log| {
             let bytes = store::read_bytes(log, &resolved.path)?;
+            let mut record = record;
+            record.recurrence_of = store::find_recurrence_anchor(&bytes, &record.text);
             if let Some(existing) = store::fold_bytes(&bytes)
                 .items
                 .into_iter()

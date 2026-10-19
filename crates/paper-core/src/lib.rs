@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod commands;
 pub mod error;
+pub mod feedback;
 pub mod output;
 pub mod secrets;
 pub mod store;
@@ -40,6 +41,10 @@ impl Severity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Impact {
+    /// `trivial` is accepted as an alias for `nice` so records written by the
+    /// canonical Python logger (which uses trivial/solid/huge) fold correctly.
+    #[serde(alias = "trivial")]
+    #[value(alias = "trivial")]
     Nice,
     Solid,
     Huge,
@@ -69,6 +74,8 @@ pub enum ClipStatus {
     Open,
     Promoted,
     Noted,
+    Resolved,
+    Wontfix,
 }
 
 impl ClipStatus {
@@ -77,6 +84,8 @@ impl ClipStatus {
             Self::Open => "open",
             Self::Promoted => "promoted",
             Self::Noted => "noted",
+            Self::Resolved => "resolved",
+            Self::Wontfix => "wontfix",
         }
     }
 }
@@ -88,12 +97,19 @@ pub struct CutRecord {
     pub ts: String,
     pub agent: String,
     pub text: String,
+    #[serde(default)]
     pub tags: Vec<String>,
     pub severity: Severity,
+    // Python fallback records omit cwd/repo; default them so a log written by
+    // either implementation always folds.
+    #[serde(default)]
     pub cwd: String,
+    #[serde(default)]
     pub repo: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "where")]
     pub where_loc: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recurrence_of: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +142,7 @@ pub struct ListItem {
 pub enum ItemStatus {
     Open,
     Resolved,
+    Wontfix,
 }
 
 // ── Clip record types ────────────────────────────────────────────────
@@ -137,11 +154,14 @@ pub struct ClipRecord {
     pub ts: String,
     pub agent: String,
     pub text: String,
+    #[serde(default)]
     pub tags: Vec<String>,
     pub impact: Impact,
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "where")]
     pub where_loc: Option<String>,
+    #[serde(default)]
     pub cwd: String,
+    #[serde(default)]
     pub repo: Option<String>,
 }
 
@@ -150,6 +170,9 @@ pub struct PromoteRecord {
     pub kind: String,
     pub id: String,
     pub ts: String,
+    // Older Rust releases wrote promote events without an agent. Default it so
+    // those logs keep folding instead of being reported as malformed.
+    #[serde(default)]
     pub agent: String,
 }
 
@@ -158,6 +181,7 @@ pub struct NoteRecord {
     pub kind: String,
     pub id: String,
     pub ts: String,
+    #[serde(default)]
     pub agent: String,
     pub text: String,
 }

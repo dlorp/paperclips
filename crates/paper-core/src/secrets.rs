@@ -52,7 +52,10 @@ mod tests {
 
     #[test]
     fn detects_aws_key() {
-        assert_eq!(scan("key AKIAIOSFODNN7EXAMPLE here"), Some("AWS access key"));
+        assert_eq!(
+            scan("key AKIAIOSFODNN7EXAMPLE here"),
+            Some("AWS access key")
+        );
     }
 
     #[test]
@@ -78,10 +81,7 @@ mod tests {
 
     #[test]
     fn detects_private_key() {
-        assert_eq!(
-            scan("-----BEGIN RSA PRIVATE KEY-----"),
-            Some("private key")
-        );
+        assert_eq!(scan("-----BEGIN RSA PRIVATE KEY-----"), Some("private key"));
     }
 
     #[test]
