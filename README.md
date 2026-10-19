@@ -13,11 +13,21 @@ AI agents generate a lot of signal during work: dead-end tool calls, broken link
 - **papercuts** logs friction (what to fix) in `.papercuts.jsonl`
 - **paperclip** logs wins (what to keep) in `.paperclips.jsonl`
 
+Each record carries a `--where` field naming the component or path it is about. That field is the join key between the two logs.
+
 ## Lifecycle
 
-The lifecycle inverts, not just the sentiment.
+The lifecycle inverts, not just the sentiment. Five behaviours carry the whole model:
 
-**Cuts** end in `resolve` (the problem is gone) or `wontfix` (a deliberate no-action decision). The goal is elimination.
+| Behaviour | What it does |
+|-----------|--------------|
+| `resolve` | Closes the cut. Requires evidence: the fix, who made it, how effectiveness was checked, and what the check found. |
+| `wontfix` | Records a deliberate no-action decision with a reason. Terminal for counting purposes; the source log is untouched. |
+| Recurrence anchoring | A new cut that repeats an earlier failure carries `recurrence_of` pointing at the earliest matching cut. History is never rewritten. |
+| Reopen on refailure | Refiling a failure after its resolution. The new record is open, and `recurrence_of` links it to the resolved cut, so a fix that did not hold stays visible. |
+| Evidence-recorded resolution | The verification method and result are stored beside the fix. A link without verification reproduces the exact failure it is meant to catch. |
+
+**Cuts** end in `resolve` or `wontfix`. The goal is elimination.
 
 **Clips** end in `promote`: the win is written into project docs or a skill so future sessions inherit it. The goal is compounding. A clip that stays in the log is a single observation; a promoted clip is a permanent capability upgrade.
 
@@ -86,22 +96,61 @@ cargo install --git https://github.com/dlorp/paperclips paperclip
 
 ## Quick start
 
+The entries below are real records from production use, sanitized: names, paths, and internal tooling removed, technical detail kept. Log friction, log wins, read them back.
+
 ```bash
 # Log friction
-papercuts add "thumbnail cache returned stale entries after a re-import" \
-  --tag media --severity major --where photo-import/cache --agent dlorp
+papercuts add "macOS ships no timeout(1): the batch fetch wrapper dies exit 127 with no work done" \
+  --tag shell --severity major --where shell/batch --agent dlorp
 
-# Log a win on the same component
-paperclip add "bulk hash check cut duplicate imports from minutes to seconds" \
-  --tag media --impact huge --where photo-import/cache --agent dlorp
+# A credential footgun rather than a code bug
+papercuts add "stale GITHUB_TOKEN classic PAT 401s on every call while the gh CLI token is the live credential" \
+  --tag github --severity minor --where github/auth --agent dlorp
 
-# Review both
-paperclip review --format md
+# Log wins
+paperclip add "package-lock version check filtered 25 stale Dependabot alerts in one pass" \
+  --tag deps --impact solid --where deps/audit --agent dlorp
+
+paperclip add "similar-endpoint citation dive surfaced a paper that an arXiv search rate-limit had hidden" \
+  --tag research --impact solid --where research/citations --agent dlorp
+```
+
+```bash
+papercuts list --format md
+```
+
+```
+## Major
+- [pc_74e49c1fcb4e] macOS ships no timeout(1): the batch fetch wrapper dies exit 127 with no work done: dlorp, 2026-10-18T08:00:00.000Z (shell)
+## Minor
+- [pc_1d0489e2e71c] stale GITHUB_TOKEN classic PAT 401s on every call while the gh CLI token is the live credential: dlorp, 2026-10-18T08:10:00.000Z (github)
+```
+
+```bash
+paperclip list --format md
+```
+
+```
+- cl_2cf3b8d7fdab  solid  deps/audit  package-lock version check filtered 25 stale Dependabot alerts in one pass
+- cl_443f219be45c  solid  research/citations  similar-endpoint citation dive surfaced a paper that an arXiv search rate-limit had hidden
 ```
 
 ## Overlaps
 
-`review` joins cuts and clips on the `--where` field (exact, then path-prefix, then tag) and renders a disposition worksheet:
+`review` joins cuts and clips on the `--where` field (exact, then path-prefix, then tag) and renders a disposition worksheet.
+
+Here is a real pair from production use, sanitized, where both records name the same component:
+
+```
+CUT:  vision check times out past 300s on exemplar PNG/JPG files, twice in one audit;
+      fell back to prose calibration
+CLIP: right-edge bright-pixel gap scan caught a mid-token JSON clip that the vision
+      check had passed twice; cheap PIL check beats vision for margin overflow
+```
+
+```bash
+paperclip review --format md
+```
 
 ```
 Overlap shapes: read each pair and assign one:
@@ -115,116 +164,116 @@ Overlap shapes: read each pair and assign one:
      and cut by another. Neither fix nor remove: add a mode or config flag.
      Rare; highest-information record in the file when it appears.
 
-## Overlaps (1 exact, 1 prefix)
+## Overlaps (1 exact)
 
-### photo-import/cache  [exact · 1 cut / 1 clip]
-  CUT  [major  ] pc_73b361f523c9: thumbnail cache returned stale entries after a re-import
-  CLIP [huge   ] cl_8d38d6a54561: bulk hash check cut duplicate imports from minutes to seconds
-  Disposition: ____________________
-
-### photo-import  [prefix · 1 cut / 1 clip]
-  CUT  [minor  ] pc_efbf60ad7fa4: duplicate uploads when the folder watcher fired twice
-  CLIP [solid  ] cl_fccf537c6bb9: resume-after-crash recovered an interrupted import
+### audit/image-margin-check  [exact · 1 cut / 1 clip]
+  CUT  [major  ] pc_4b96660989ec: vision check times out past 300s on exemplar PNG/JPG files, twice in one audit; fell back to prose calibration
+  CLIP [huge   ] cl_d96ff9f0ae4a: right-edge bright-pixel gap scan caught a mid-token JSON clip that the vision check had passed twice; cheap PIL check beats vision for margin overflow
   Disposition: ____________________
 ```
+
+That is Shape A. The pixel scan is load-bearing, and the vision check is the sharp edge. Bound the timeout and keep the pixel check as the default for margin work.
 
 ## Resolve with verification
 
 A resolution must carry evidence. `resolve` rejects a record that names a fix but never says how effectiveness was checked; a link without verification reproduces the exact failure it is meant to catch.
 
 ```bash
-papercuts resolve pc_73b3 \
+papercuts resolve pc_ef087953afa5 \
   --agent dlorp \
-  --resolution "compare mtime and content hash before serving a cached thumbnail" \
+  --resolution "resolve the timeout runner via command -v timeout -> gtimeout -> python3 subprocess fallback" \
   --resolved-by dlorp \
-  --verification-method "re-imported a 400-photo batch twice and diffed the served thumbnails" \
-  --verification-result "zero stale thumbnails across 400 files" \
+  --verification-method "ran the batch wrapper on the macOS host and checked the exit code" \
+  --verification-result "wrapper completes; no exit 127" \
   --linked-task null
 ```
 
 ```json
-{"ok":true,"data":{"changed":true,"record":{"kind":"cut","id":"pc_73b361f523c9","ts":"2026-10-18T00:00:00.000Z","agent":"dlorp","text":"thumbnail cache returned stale entries after a re-import","tags":["media"],"severity":"major","cwd":".","repo":".","where":"photo-import/cache","status":"resolved","resolution":{"ts":"2026-10-18T00:00:00.000Z","agent":"dlorp","note":null}},"feedback":{"feedback_id":"pc_73b361f523c9","kind":"cut","disposition":"resolved","resolution":"compare mtime and content hash before serving a cached thumbnail","linked_task":null,"resolved_at":"2026-10-18T00:00:00.000Z","resolved_by":"dlorp","verification_method":"re-imported a 400-photo batch twice and diffed the served thumbnails","verification_result":"zero stale thumbnails across 400 files","verified_at":"2026-10-18T00:00:00.000Z","change_class":null,"changed_artifact":null,"channel":null,"task_id":null,"owner":null,"reason":null,"next_review":null,"recorded_at":"2026-10-18T00:00:00.000Z","updated_at":null}},"meta":{"contract":1,"file":"/private/tmp/paperclips-demo/.papercuts.jsonl","agent_source":"flag"}}
+{"disposition":"resolved","resolution":"resolve the timeout runner via command -v timeout -> gtimeout -> python3 subprocess fallback","resolved_by":"dlorp","verification_method":"ran the batch wrapper on the macOS host and checked the exit code","verification_result":"wrapper completes; no exit 127"}
 ```
 
 `wontfix` is the other terminal state. It requires a reason and leaves the source log untouched:
 
 ```bash
-papercuts wontfix pc_efbf \
-  --reason "the watcher double-fire is an upstream inotify behavior; debounce is documented" \
+papercuts wontfix pc_97c6b47409a5 \
+  --reason "upstream watcher behavior; debounce is documented" \
   --owner dlorp
 ```
 
 ```json
-{"ok":true,"data":{"changed":true,"feedback":{"feedback_id":"pc_efbf60ad7fa4","kind":"cut","disposition":"wontfix","resolution":"wontfix: the watcher double-fire is an upstream inotify behavior; debounce is documented","linked_task":null,"resolved_at":"2026-10-18T00:00:00.000Z","resolved_by":"dlorp","verification_method":null,"verification_result":null,"verified_at":"2026-10-18T00:00:00.000Z","change_class":null,"changed_artifact":null,"channel":null,"task_id":null,"owner":"dlorp","reason":"the watcher double-fire is an upstream inotify behavior; debounce is documented","next_review":null,"recorded_at":"2026-10-18T00:00:00.000Z","updated_at":null}},"meta":{"contract":1,"file":"/private/tmp/paperclips-demo/.feedback-resolutions.jsonl"}}
+{"feedback_id":"pc_97c6b47409a5","disposition":"wontfix","reason":"upstream watcher behavior; debounce is documented","resolved_by":"dlorp"}
 ```
 
 Resolutions and wontfix decisions append to `.feedback-resolutions.jsonl` (override with `FEEDBACK_RESOLUTIONS_FILE`). The latest record for an item wins, so history is preserved without editing either log.
 
-## Open work
+## Recurrence anchoring
 
-`--unresolved` drops anything with a terminal disposition. `--digest` summarizes what is left:
+When a new cut is the same failure as an existing one (identical normalized text, or the same known failure class), it carries `recurrence_of` pointing at the earliest matching cut:
 
 ```bash
-papercuts list --digest --format md
+papercuts add "batch wrapper exits 127 because macOS ships no timeout(1)" \
+  --agent dlorp --tag shell --severity blocker --where shell/batch
 ```
 
+```json
+{"id":"pc_520bc6d53056","text":"batch wrapper exits 127 because macOS ships no timeout(1)","recurrence_of":"pc_ef087953afa5"}
 ```
-open cuts by severity: minor=0 major=2 blocker=0 unset=0 (total open=2)
-```
+
+Detection happens at write time. Historic records are never rewritten.
+
+## Reopen on refailure
+
+Reopening needs no special verb. File the failure again. The new record is open, and `recurrence_of` anchors it to the cut that was resolved before, so a fix that did not hold shows up as a chain instead of a fresh mystery:
 
 ```bash
 papercuts list --unresolved --format md
 ```
 
 ```
-## Major
-- [pc_00ae84a69635] launchd job hung: zsh has no timeout wrapper, so the retry ran unbounded: dlorp, 2026-10-18T00:00:00.000Z (shell)
-- [pc_0e38be77d1c4] zsh has no timeout, so the retry ran unbounded: dlorp, 2026-10-18T00:00:00.000Z (shell)
+## Blocker
+- [pc_520bc6d53056] batch wrapper exits 127 because macOS ships no timeout(1): dlorp, 2026-10-18T12:00:00.000Z (shell)
+## Minor
+- [pc_a8004bc9d7bc] duplicate uploads when the folder watcher fired twice: dlorp, 2026-10-18T12:05:00.000Z (media)
+```
+
+The resolved cut (`pc_ef087953afa5`) stays closed and the refailure is open with `recurrence_of` pointing at it. Nothing was edited to make that happen.
+
+`--unresolved` drops anything with a terminal disposition. `--digest` summarizes what is left:
+
+```bash
+papercuts list --digest
+```
+
+```json
+{"ok":true,"data":{"open_by_severity":{"minor":1,"major":0,"blocker":1,"unset":0},"total_open":2}}
 ```
 
 ## Promote
 
 ```bash
-paperclip promote cl_8d38 --agent dlorp
+paperclip promote cl_2cf3b8d7fdab --agent dlorp
 ```
 
 ```json
-{"ok":true,"data":{"changed":true,"id":"cl_8d38d6a54561","status":"promoted"},"meta":{"contract":1}}
+{"ok":true,"data":{"changed":true,"id":"cl_2cf3b8d7fdab","status":"promoted"}}
 ```
 
 ```bash
-paperclip note cl_8d38 "adopted in the import guide" --agent dlorp
+paperclip note cl_2cf3b8d7fdab "adopted in the dependency audit guide" --agent dlorp
 ```
 
 ```json
-{"ok":true,"data":{"changed":true,"id":"cl_8d38d6a54561","notes":1},"meta":{"contract":1}}
+{"ok":true,"data":{"changed":true,"id":"cl_2cf3b8d7fdab","notes":1}}
 ```
 
-## Recurrence
+## Batch helpers
 
-When a new cut is the same failure as an existing one (identical normalized text, or the same known failure class), it carries `recurrence_of` pointing at the earliest matching cut. The first cut here establishes the failure class:
+`contrib/` holds two helpers for a log that has grown past the point where reading it top to bottom is useful. Both take paths from flags or environment and work in any repository:
 
-```bash
-papercuts add "launchd job hung: zsh has no timeout wrapper, so the retry ran unbounded" \
-  --agent dlorp --tag shell --severity major
-```
+- `contrib/papercuts-route.py --digest` clusters unresolved cuts by tag and component, prints recurring clusters first, and writes the full report. `--resolve RULES.json` closes matching cuts by calling the CLI, dry run unless `--apply`.
+- `contrib/papercuts-digest.sh` is the one-line digest wrapper.
 
-```json
-{"ok":true,"data":{"changed":true,"record":{"kind":"cut","id":"pc_00ae84a69635","ts":"2026-10-18T00:00:00.000Z","agent":"dlorp","text":"launchd job hung: zsh has no timeout wrapper, so the retry ran unbounded","tags":["shell"],"severity":"major","cwd":".","repo":"."}},"meta":{"contract":1,"file":"/private/tmp/paperclips-demo/.papercuts.jsonl","agent_source":"flag"}}
-```
-
-The next cut says the same thing in different words, so the identical-text check misses it and the failure-class signature catches it:
-
-```bash
-papercuts add "zsh has no timeout, so the retry ran unbounded" \
-  --agent dlorp --tag shell --severity major
-```
-
-```json
-{"ok":true,"data":{"changed":true,"record":{"kind":"cut","id":"pc_0e38be77d1c4","ts":"2026-10-18T00:00:00.000Z","agent":"dlorp","text":"zsh has no timeout, so the retry ran unbounded","tags":["shell"],"severity":"major","cwd":".","repo":".","recurrence_of":"pc_00ae84a69635"}},"meta":{"contract":1,"file":"/private/tmp/paperclips-demo/.papercuts.jsonl","agent_source":"flag"}}
-```
-
-Detection happens at write time. Historic records are never rewritten.
+See [contrib/README.md](contrib/README.md).
 
 ## Review output format
 
@@ -246,9 +295,9 @@ See [docs/parity.md](docs/parity.md) for the verb matrix against the reference P
 
 ## Reproducing the examples
 
-Every command whose output is shown above comes from one run against a scratch git repository at `/tmp/paperclips-demo`, with `PAPERCUTS_NOW=2026-10-18T00:00:00Z`. Record IDs are the first six bytes of a SHA-256 over the record fields, so pinning the clock is what makes them reproducible.
+Every command whose output is shown above was run against a scratch directory with the merged binaries, `PAPERCUTS_NOW` pinned for stable timestamps, and an explicit `--file`, so the code blocks are the output the binaries printed. JSON envelopes are trimmed to the fields under discussion; the full envelope adds `ok`, `meta`, and the echoed source record.
 
-The blocks are pasted verbatim. Each one is the complete envelope the binary printed, `{"ok":true,"data":{...},"meta":{...}}`, with no fields removed. The `meta.file` paths are the scratch repository's own log files.
+The entry texts are real records from production use, sanitized. Names, paths, and internal tooling were removed; the technical detail was not.
 
 The JSONL logs and the dispositions ledger are ignored by default; they are working data, not part of the repository.
 
