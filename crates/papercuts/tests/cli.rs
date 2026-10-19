@@ -24,6 +24,7 @@ fn command() -> Command {
         .env("PAPERCUTS_NOW", NOW)
         .env_remove("PAPERCUTS_FILE")
         .env_remove("PAPERCUTS_AGENT")
+        .env_remove("FEEDBACK_RESOLUTIONS_FILE")
         .env_remove("CLAUDECODE");
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("CODEX_")
@@ -103,6 +104,16 @@ fn every_command_success_envelope_deserializes() {
             "fixer",
             "--note",
             "fixed",
+            "--resolution",
+            "bounded the retry loop",
+            "--resolved-by",
+            "fixer",
+            "--verification-method",
+            "re-ran the failing command",
+            "--verification-result",
+            "exit 0 on three consecutive runs",
+            "--linked-task",
+            "null",
         ],
     ));
     assert!(resolved.data.changed);
@@ -265,13 +276,25 @@ fn resolve_prefix_errors_and_idempotence_are_structured() {
     let added = add(&file, "resolve me");
     let id = added.data.record.id;
     let prefix = &id[3..7];
-    let first: SuccessEnvelope<ResolveData> = success(&run_file(
-        &file,
-        &["resolve", &prefix.to_ascii_uppercase(), "--agent", "fixer"],
-    ));
+    let capa = [
+        "--resolution",
+        "capped the retry count",
+        "--resolved-by",
+        "fixer",
+        "--verification-method",
+        "re-ran the failing command",
+        "--verification-result",
+        "exit 0 three times",
+    ];
+    let upper_prefix = prefix.to_ascii_uppercase();
+    let mut first_args = vec!["resolve", upper_prefix.as_str(), "--agent", "fixer"];
+    first_args.extend(capa);
+    let first: SuccessEnvelope<ResolveData> = success(&run_file(&file, &first_args));
     assert!(first.data.changed);
-    let second: SuccessEnvelope<ResolveData> =
-        success(&run_file(&file, &["resolve", &id, "--agent", "fixer"]));
+    assert_eq!(first.data.feedback.disposition, "resolved");
+    let mut second_args = vec!["resolve", &id, "--agent", "fixer"];
+    second_args.extend(capa);
+    let second: SuccessEnvelope<ResolveData> = success(&run_file(&file, &second_args));
     assert!(!second.data.changed);
     assert_eq!(second.meta.warnings, ["already resolved"]);
 
@@ -410,7 +433,21 @@ fn mutation_dry_runs_do_not_write() {
     let before = std::fs::read(&file).unwrap();
     let resolved: SuccessEnvelope<ResolveData> = success(&run_file(
         &file,
-        &["resolve", &id, "--agent", "a", "--dry-run"],
+        &[
+            "resolve",
+            &id,
+            "--agent",
+            "a",
+            "--dry-run",
+            "--resolution",
+            "preview",
+            "--resolved-by",
+            "a",
+            "--verification-method",
+            "preview",
+            "--verification-result",
+            "preview",
+        ],
     ));
     assert!(!resolved.data.changed);
     assert_eq!(resolved.data.record.status, ItemStatus::Resolved);
@@ -813,8 +850,23 @@ fn eight_way_resolve_race_appends_once() {
             let barrier = Arc::clone(&barrier);
             thread::spawn(move || {
                 barrier.wait();
-                let envelope: SuccessEnvelope<ResolveData> =
-                    success(&run_file(&file, &["resolve", &id, "--agent", "race"]));
+                let envelope: SuccessEnvelope<ResolveData> = success(&run_file(
+                    &file,
+                    &[
+                        "resolve",
+                        &id,
+                        "--agent",
+                        "race",
+                        "--resolution",
+                        "race resolution",
+                        "--resolved-by",
+                        "race",
+                        "--verification-method",
+                        "race verification",
+                        "--verification-result",
+                        "one winner",
+                    ],
+                ));
                 envelope.data.changed
             })
         })
@@ -995,4 +1047,147 @@ fn error_envelope_matrix() {
         65,
         "ambiguous_id",
     );
+}
+
+#[test]
+fn recurrence_links_identical_text_and_timeout_signature() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("cuts.jsonl");
+
+    let first = add(&file, "command not found: timeout");
+    let repeated = add(&file, "zsh has no timeout");
+    assert_eq!(
+        repeated.data.record.recurrence_of.as_deref(),
+        Some(first.data.record.id.as_str())
+    );
+
+    let identical = add(&file, "same failure, twice");
+    let again: SuccessEnvelope<AddData> = success(&run_file(
+        &file,
+        &["add", "same failure, twice", "--agent", "second-tester"],
+    ));
+    assert_eq!(
+        again.data.record.recurrence_of.as_deref(),
+        Some(identical.data.record.id.as_str())
+    );
+
+    // A generic mention of the word timeout is not a failure-class match.
+    let unrelated = add(&file, "http client timeout is configurable");
+    assert!(unrelated.data.record.recurrence_of.is_none());
+}
+
+#[test]
+fn resolve_requires_capa_verification_fields() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("cuts.jsonl");
+    let added = add(&file, "needs verification");
+    let id = added.data.record.id;
+    let rejected = error(
+        &run_file(
+            &file,
+            &[
+                "resolve",
+                &id,
+                "--resolution",
+                "patched",
+                "--resolved-by",
+                "fixer",
+            ],
+        ),
+        65,
+        "invalid_input",
+    );
+    assert!(rejected.error.message.contains("CAPA"));
+    assert!(rejected.error.message.contains("--verification-method"));
+}
+
+#[test]
+fn wontfix_is_terminal_and_excluded_from_unresolved_and_digest() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("cuts.jsonl");
+    let added = add(&file, "accepted risk");
+    let id = added.data.record.id;
+
+    let wontfix: SuccessEnvelope<Value> = success(&run_file(
+        &file,
+        &[
+            "wontfix",
+            &id,
+            "--reason",
+            "upstream behavior",
+            "--owner",
+            "tester",
+        ],
+    ));
+    assert_eq!(wontfix.data["feedback"]["disposition"], "wontfix");
+    assert_eq!(wontfix.data["feedback"]["reason"], "upstream behavior");
+
+    let listed: SuccessEnvelope<ListData> =
+        success(&run_file(&file, &["list", "--status", "wontfix"]));
+    assert_eq!(listed.data.count, 1);
+    assert_eq!(listed.data.items[0].status, ItemStatus::Wontfix);
+
+    let open: SuccessEnvelope<ListData> = success(&run_file(&file, &["list"]));
+    assert_eq!(open.data.count, 0);
+
+    let unresolved: SuccessEnvelope<ListData> = success(&run_file(
+        &file,
+        &["list", "--status", "all", "--unresolved"],
+    ));
+    assert_eq!(unresolved.data.count, 0);
+
+    let digest: SuccessEnvelope<Value> = success(&run_file(&file, &["list", "--digest"]));
+    assert_eq!(digest.data["total_open"], 0);
+    assert_eq!(digest.data["open_by_severity"]["minor"], 0);
+
+    // The source log is append-only and never rewritten by wontfix.
+    let lines = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(lines.lines().count(), 1);
+}
+
+#[test]
+fn python_written_cut_and_feedback_ledger_fold_in_rust() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("cuts.jsonl");
+    // Shape emitted by the canonical Python logger: no cwd/repo, extra status.
+    let python_cut = json!({
+        "kind": "cut",
+        "id": "pc_0123456789ab",
+        "ts": "2026-07-09T18:30:00.000+00:00",
+        "agent": "logger",
+        "text": "python wrote this",
+        "tags": ["storage"],
+        "severity": "major",
+        "status": "open",
+        "where": "kv-store"
+    })
+    .to_string();
+    std::fs::write(&file, format!("{python_cut}\n")).unwrap();
+    let feedback = json!({
+        "feedback_id": "pc_0123456789ab",
+        "kind": "cut",
+        "disposition": "resolved",
+        "resolution": "bounded the queue",
+        "linked_task": null,
+        "resolved_at": "2026-07-10T00:00:00.000+00:00",
+        "resolved_by": "logger",
+        "verification_method": "rerun",
+        "verification_result": "pass",
+        "verified_at": "2026-07-10T00:00:00.000+00:00"
+    })
+    .to_string();
+    std::fs::write(
+        temp.path().join(".feedback-resolutions.jsonl"),
+        format!("{feedback}\n"),
+    )
+    .unwrap();
+
+    let listed: SuccessEnvelope<ListData> = success(&run_file(&file, &["list", "--status", "all"]));
+    assert_eq!(listed.data.count, 1);
+    assert_eq!(listed.data.items[0].status, ItemStatus::Resolved);
+    assert_eq!(
+        listed.data.items[0].cut.where_loc.as_deref(),
+        Some("kv-store")
+    );
+    assert!(listed.meta.warnings.is_empty());
 }
