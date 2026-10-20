@@ -275,6 +275,12 @@ paperclip note cl_2cf3b8d7fdab "adopted in the dependency audit guide" --agent d
 
 See [contrib/README.md](contrib/README.md).
 
+## From clusters to checks
+
+A digest tells you which cuts keep coming back, and the repetition is the useful part. A failure class that recurs across agents is a class worth catching while it happens rather than filing after the work is already wrong. [ysk-watch](https://github.com/dlorp/ysk-watch) is the other end of that loop: it watches a live run for the shapes this log surfaces often enough to name (a suite reported green with no passing run behind it, a test weakened to get there, an empty result treated as success), and its thresholds were mined from a production friction log like this one rather than guessed.
+
+Used together, paperclips records what agents survive and ysk-watch turns the recurring part of that record into a live tripwire. Read `papercuts route --digest`, find the cluster, name the failure, add the check.
+
 ## Review output format
 
 `--format json` (default): machine-readable join records for downstream processing.
@@ -300,6 +306,10 @@ Every command whose output is shown above was run against a scratch directory wi
 The entry texts are real records from production use, sanitized. Names, paths, and internal tooling were removed; the technical detail was not.
 
 The JSONL logs and the dispositions ledger are ignored by default; they are working data, not part of the repository.
+
+## Sibling tool
+
+[ysk-watch](https://github.com/dlorp/ysk-watch) watches for the shortcuts these cuts describe while they happen. ysk-watch catches it live; paperclips remembers it.
 
 ## Attribution
 
